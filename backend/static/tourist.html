@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>GuardianID – Tourist (eKYC + Geofence + Live GPS)</title>
+  <style>
+    :root { --primary:#0ea5e9; --green:#10b981; --red:#ef4444; --bg:#f8fafc; --card:#ffffff; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); margin:0; }
+    .container { max-width: 760px; margin: 0 auto; padding: 20px; }
+    .card { background:var(--card); padding:20px; border-radius:16px; box-shadow:0 8px 20px rgba(0,0,0,.06); margin-bottom:16px; }
+    h1 { font-size: 1.4rem; margin: 0 0 12px; }
+    label { display:block; margin:10px 0 6px; font-weight:600; }
+    input, select { width:100%; padding:12px; border:1px solid #e5e7eb; border-radius:12px; font-size:1rem; }
+    button { width:100%; padding:14px; border:none; border-radius:14px; font-size:1rem; color:#fff; cursor:pointer; margin-top:12px; }
+    .primary { background:var(--primary); }
+    .success { background:var(--green); }
+    .danger { background:var(--red); }
+    .qr { display:flex; justify-content:center; align-items:center; }
+    img.qrimg { width: 180px; height: 180px; border-radius:12px; border:1px solid #e5e7eb; background:#fff; }
+    .row { display:flex; gap:12px; }
+    .row > * { flex:1; }
+    .muted { color:#64748b; font-size:.9rem; }
+    .badge { display:inline-block; padding:6px 10px; border-radius:10px; font-weight:600; }
+    .PENDING { background:#fde68a; color:#92400e; }
+    .VERIFIED { background:#d1fae5; color:#065f46; }
+    .REJECTED { background:#fecaca; color:#7f1d1d; }
+  </style>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Register & Get Digital ID</h1>
+      <div class="row">
+        <div>
+          <label>Name</label>
+          <input id="name" placeholder="Your full name"/>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Phone</label>
+          <input id="phone" placeholder="+91-xxxxxxxxxx"/>
+        </div>
+        <div>
+          <label>Emergency Contact</label>
+          <input id="emergency" placeholder="+91-xxxxxxxxxx"/>
+        </div>
+      </div>
+      <button class="primary" onclick="registerTourist()">Register & Generate QR</button>
+      <p class="muted" id="regStatus"></p>
+    </div>
+
+    <div class="card" id="qrCard" style="display:none;">
+      <h1>Your Digital ID</h1>
+      <div class="qr">
+        <img id="qr" class="qrimg" alt="QR Code"/>
+      </div>
+      <p class="muted">Tourist ID: <span id="tid"></span></p>
+
+      <div class="row">
+        <div>
+          <label>Where are you? (Hotel / Museum / Market)</label>
+          <input id="locationLabel" placeholder="Location label"/>
+          <button class="success" onclick="checkIn()">✅ Check-In</button>
+        </div>
+        <div>
+          <label>Emergency</label>
+          <button class="danger" onclick="sendSOS()">🚨 SOS</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h1>Live Map & Geofence</h1>
+      <div id="map" style="height: 320px; border-radius:12px;"></div>
+      <p class="muted" id="geoMsg">Geofence monitoring: waiting for location...</p>
+    </div>
+
+    <div class="card">
+      <h1>eKYC Verification</h1>
+      <div class="row">
+        <div>
+          <label>Document Type</label>
+          <select id="docType">
+            <option value="AADHAAR">Aadhaar (India)</option>
+            <option value="PASSPORT">Passport (Other countries)</option>
+          </select>
+        </div>
+        <div>
+          <label>ID Number</label>
+          <input id="idNumber" placeholder="Aadhaar (12 digits) or Passport number"/>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Upload Document (PDF/JPG/PNG)</label>
+          <input type="file" id="kycFile" accept=".pdf,.jpg,.jpeg,.png"/>
+        </div>
+        <div>
+          <label>Status</label>
+          <div id="kycStatus" class="badge PENDING">PENDING</div>
+        </div>
+      </div>
+      <button class="primary" onclick="submitKYC()">Verify eKYC</button>
+      <p class="muted" id="actionStatus"></p>
+    </div>
+
+    <div class="card">
+      <p class="muted">Tip: Keep this tab open for live safety tracking.</p>
+      <p class="muted"><a href="/static/dashboard.html">Open Authority Dashboard</a> • <a href="/static/admin.html">Open Admin</a></p>
+    </div>
+  </div>
+
+<script>
+const API = location.origin;
+let map, userMarker, zones = [], currentZone = null, enterTime = null, dwellTimer = null;
+// add this global last-known container
+let lastKnown = { lat: null, lng: null, ts: null };
+
+
+function beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination); o.type='sine'; o.frequency.value=880;
+    o.start(); setTimeout(()=>{o.stop(); ctx.close()}, 150);
+  } catch(e){}
+}
+
+function notify(title, body) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(title, { body });
+  }
+}
+
+function askNotifPermission() {
+  if ('Notification' in window && Notification.permission !== 'granted') {
+    Notification.requestPermission();
+  }
+}
+
+function loadFromLocal() {
+  const tid = localStorage.getItem('tourist_id');
+  const qr = localStorage.getItem('qr_png');
+  if (tid && qr) {
+    document.getElementById('qrCard').style.display = 'block';
+    document.getElementById('tid').textContent = tid;
+    document.getElementById('qr').src = 'data:image/png;base64,' + qr;
+  }
+}
+loadFromLocal();
+
+async function registerTourist() {
+  const name = document.getElementById('name').value.trim();
+  const phone = document.getElementById('phone').value.trim();
+  const emergency_contact = document.getElementById('emergency').value.trim();
+  const res = await fetch(API + '/api/register', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, phone, emergency_contact})
+  });
+  const data = await res.json();
+  localStorage.setItem('tourist_id', data.tourist_id);
+  localStorage.setItem('qr_png', data.qr_png_base64);
+  document.getElementById('qrCard').style.display = 'block';
+  document.getElementById('tid').textContent = data.tourist_id;
+  document.getElementById('qr').src = 'data:image/png;base64,' + data.qr_png_base64;
+  document.getElementById('regStatus').textContent = 'Registered! Scroll down for your Digital ID.';
+}
+
+async function checkIn() {
+  const tourist_id = localStorage.getItem('tourist_id');
+  if (!tourist_id) return;
+  const location_label = document.getElementById('locationLabel').value || '-';
+  const res = await fetch(API + '/api/checkin', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ tourist_id, location_label })
+  });
+  const data = await res.json();
+  document.getElementById('actionStatus').textContent = 'Check-in recorded. Hash: ' + (data.hash || '');
+}
+
+async function sendSOS() {
+  const tourist_id = localStorage.getItem('tourist_id');
+  if (!tourist_id) return;
+  const location_label = document.getElementById('locationLabel').value || '-';
+
+  // improved getPos: try high-accuracy then cached, longer timeout
+  function getPos(timeout = 10000) {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) return resolve(null);
+      let done = false;
+
+      navigator.geolocation.getCurrentPosition(
+        (p) => { if (!done) { done = true; resolve(p.coords); } },
+        (err) => {
+          // fallback quick try (cached)
+          navigator.geolocation.getCurrentPosition(
+            (p2) => { if (!done) { done = true; resolve(p2.coords); } },
+            () => { if (!done) { done = true; resolve(null); } },
+            { maximumAge: 60000, timeout: 3000 }
+          );
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: timeout }
+      );
+
+      // ultimate safety fallback
+      setTimeout(() => { if (!done) { done = true; resolve(null); } }, timeout + 500);
+    });
+  }
+
+  document.getElementById('actionStatus').textContent = 'Attempting to get location...';
+  const coords = await getPos(10000);
+
+  // Use coords from getPos if available; otherwise use lastKnown from watchPosition if recent (<2 min)
+  let lat = null, lng = null;
+  if (coords) {
+    lat = coords.latitude; lng = coords.longitude;
+  } else if (lastKnown.lat !== null && (Date.now() - (lastKnown.ts || 0)) < (2 * 60 * 1000)) {
+    // fallback to last known position if it's not older than 2 minutes
+    lat = lastKnown.lat; lng = lastKnown.lng;
+    console.warn('[SOS] Using lastKnown fallback coords', lastKnown);
+  } else {
+    console.warn('[SOS] No coords available (getCurrentPosition timed out and no recent lastKnown)');
+  }
+
+  const body = { tourist_id, location_label };
+  if (lat !== null && lng !== null) { body.lat = lat; body.lng = lng; }
+
+  console.log('[DEBUG] Sending SOS body:', body);
+  document.getElementById('actionStatus').textContent = 'Sending SOS...';
+
+  try {
+    const res = await fetch(API + '/api/sos', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    document.getElementById('actionStatus').textContent =
+      '🚨 SOS sent! ' + (data.message || '') + (data.hash ? (' Hash: ' + data.hash) : '') +
+      (body.lat ? (' | coords: ' + body.lat.toFixed(5) + ',' + body.lng.toFixed(5)) : ' | coords: unknown');
+    console.log('[DEBUG] SOS response:', data);
+  } catch (e) {
+    document.getElementById('actionStatus').textContent = 'Failed to send SOS: ' + (e.message || e);
+    console.error('SOS send failed', e);
+  }
+}
+
+
+async function submitKYC() {
+  const tourist_id = localStorage.getItem('tourist_id');
+  const docType = document.getElementById('docType').value;
+  const idNumber = document.getElementById('idNumber').value.trim();
+  const fileInput = document.getElementById('kycFile');
+  if (!tourist_id || !fileInput.files.length) {
+    document.getElementById('actionStatus').textContent = 'Please choose a file after registration.';
+    return;
+  }
+  const fd = new FormData();
+  fd.append('tourist_id', tourist_id);
+  fd.append('doc_type', docType);
+  fd.append('id_number', idNumber);
+  fd.append('file', fileInput.files[0]);
+  const res = await fetch(API + '/api/kyc', { method:'POST', body: fd });
+  const data = await res.json();
+  const badge = document.getElementById('kycStatus');
+  badge.textContent = data.kyc_status || 'PENDING';
+  badge.className = 'badge ' + (data.kyc_status || 'PENDING');
+  document.getElementById('actionStatus').textContent = 'KYC result: ' + data.kyc_status + ' | ' + (data.kyc_doc_type || '') + ' | ' + (data.kyc_id_masked || '');
+}
+
+async function sendGPS(lat, lng) {
+  const tourist_id = localStorage.getItem('tourist_id');
+  if (!tourist_id) return;
+  try {
+    await fetch(API + '/api/gps', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ tourist_id, lat, lng })
+    });
+  } catch(e) {}
+}
+
+async function initMap() {
+  askNotifPermission();
+  map = L.map('map');
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+  map.setView([26.1725, 91.7440], 14);
+
+  zones = await (await fetch(API + '/api/zones')).json();
+  zones.forEach(z => {
+    const coords = z.geojson.coordinates[0].map(([lng, lat]) => [lat, lng]);
+    const color = z.zone_type === 'TERROR' ? '#ef4444' : (z.zone_type === 'RESTRICTED' ? '#f59e0b' : '#f43f5e');
+    const poly = L.polygon(coords, { color, weight:2, fillOpacity:0.2 }).addTo(map);
+    poly.bindTooltip(`${z.zone_type}: ${z.name} (dwell ${z.dwell_minutes} min)`);
+    z._poly = poly;
+  });
+
+  if ("geolocation" in navigator) {
+    navigator.geolocation.watchPosition(onGeo, () => {
+      document.getElementById('geoMsg').textContent = "Unable to get location (check permissions).";
+    }, { enableHighAccuracy:true, maximumAge:5000, timeout:10000 });
+  } else {
+    document.getElementById('geoMsg').textContent = "Geolocation not supported.";
+  }
+}
+
+function onGeo(pos) {
+  const lat = pos.coords.latitude, lng = pos.coords.longitude;
+    // record last-known coords (timestamp useful)
+  lastKnown.lat = lat;
+  lastKnown.lng = lng;
+  lastKnown.ts = Date.now();
+
+  if (!userMarker) {
+    userMarker = L.circleMarker([lat, lng], { radius:6 }).addTo(map);
+    map.setView([lat, lng], 15);
+  } else {
+    userMarker.setLatLng([lat, lng]);
+  }
+
+  sendGPS(lat, lng); // push to backend
+
+  const pt = turf.point([lng, lat]);
+  let inside = null;
+  for (const z of zones) {
+    const poly = turf.polygon(z.geojson.coordinates);
+    if (turf.booleanPointInPolygon(pt, poly)) { inside = z; break; }
+  }
+
+  const msg = document.getElementById('geoMsg');
+  if (inside && (!currentZone || currentZone.id !== inside.id)) {
+    currentZone = inside;
+    enterTime = Date.now();
+    msg.textContent = `Entered ${inside.zone_type} zone: ${inside.name}. Monitoring dwell...`;
+    beep(); notify("Safety Alert", `Entered ${inside.zone_type} zone: ${inside.name}`);
+    clearInterval(dwellTimer);
+    dwellTimer = setInterval(async () => {
+      if (!currentZone) return;
+      const elapsedSec = Math.floor((Date.now() - enterTime) / 1000);
+      const dwellLimitSec = (currentZone.dwell_minutes || 5) * 60;
+      msg.textContent = `Inside ${currentZone.zone_type} (${currentZone.name}) — ${Math.floor(elapsedSec/60)}m ${elapsedSec%60}s`;
+      if (elapsedSec >= dwellLimitSec) {
+        clearInterval(dwellTimer);
+        await notifyDwell(elapsedSec);
+        beep(); notify("Officer Alerted", `Stayed too long in ${currentZone.name}. Officers notified.`);
+        msg.textContent = `Dwell threshold exceeded — officers notified.`;
+      }
+    }, 5000);
+  } else if (!inside && currentZone) {
+    msg.textContent = `Exited ${currentZone.zone_type} zone: ${currentZone.name}.`;
+    currentZone = null;
+    clearInterval(dwellTimer); dwellTimer = null; enterTime = null;
+  } else if (!inside) {
+    msg.textContent = "Outside restricted/danger zones.";
+  }
+}
+
+async function notifyDwell(secondsInside) {
+  const tourist_id = localStorage.getItem('tourist_id');
+  if (!tourist_id || !currentZone) return;
+  try {
+    await fetch(API + '/api/geofence/dwell', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ tourist_id, zone_id: currentZone.id, seconds_inside: secondsInside })
+    });
+  } catch(e) { console.error('notifyDwell failed', e); }
+}
+
+document.addEventListener('DOMContentLoaded', initMap);
+</script>
+</body>
+</html>
