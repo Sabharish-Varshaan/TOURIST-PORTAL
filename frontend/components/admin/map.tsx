@@ -8,6 +8,7 @@ import "leaflet-draw"
 
 interface AdminMapProps {
   zones: any[]
+<<<<<<< HEAD
   onPolygonDrawn?: (polygon: L.Polygon) => void
 }
 
@@ -20,6 +21,13 @@ export default function AdminMap({ zones, onPolygonDrawn }: AdminMapProps) {
   useEffect(() => {
     callbackRef.current = onPolygonDrawn
   }, [onPolygonDrawn])
+=======
+}
+
+export default function AdminMap({ zones }: AdminMapProps) {
+  const mapRef = useRef<L.Map | null>(null)
+  const drawnItemsRef = useRef<L.FeatureGroup | null>(null)
+>>>>>>> bbc8bab (Initial commit)
 
   useEffect(() => {
     if (!mapRef.current) {
@@ -46,6 +54,7 @@ export default function AdminMap({ zones, onPolygonDrawn }: AdminMapProps) {
       })
       map.addControl(drawControl)
 
+<<<<<<< HEAD
       // ✅ EVENT HANDLER - Listen for both created and edited
       map.on("draw:created", function(e: any) {
         console.log("draw:created event fired") // Debug log
@@ -69,6 +78,8 @@ export default function AdminMap({ zones, onPolygonDrawn }: AdminMapProps) {
         })
       })
 
+=======
+>>>>>>> bbc8bab (Initial commit)
       mapRef.current = map
     }
 

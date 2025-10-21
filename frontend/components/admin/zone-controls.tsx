@@ -1,21 +1,32 @@
 "use client"
 
+<<<<<<< HEAD
 import { useState, RefObject } from "react"
 import L from "leaflet"
+=======
+import { useState, useRef } from "react"
+>>>>>>> bbc8bab (Initial commit)
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
 interface ZoneControlsProps {
   onZoneSaved: () => void
+<<<<<<< HEAD
   drawnPolygon: L.Polygon | null
   latestPolyRef: RefObject<L.Polygon | null>
 }
 
 export default function ZoneControls({ onZoneSaved, drawnPolygon, latestPolyRef }: ZoneControlsProps) {
+=======
+}
+
+export default function ZoneControls({ onZoneSaved }: ZoneControlsProps) {
+>>>>>>> bbc8bab (Initial commit)
   const [zoneName, setZoneName] = useState("")
   const [zoneType, setZoneType] = useState("RESTRICTED")
   const [dwellMinutes, setDwellMinutes] = useState(5)
   const [status, setStatus] = useState("Draw a polygon on the right and then save it.")
+<<<<<<< HEAD
 
   const handleSaveZone = async () => {
     // ✅ USE THE REF FIRST, FALLBACK TO STATE
@@ -28,11 +39,21 @@ export default function ZoneControls({ onZoneSaved, drawnPolygon, latestPolyRef 
       return
     }
 
+=======
+  const latestPolyRef = useRef<any>(null)
+
+  const handleSaveZone = async () => {
+    if (!latestPolyRef.current) {
+      setStatus("Please draw a polygon first.")
+      return
+    }
+>>>>>>> bbc8bab (Initial commit)
     if (!zoneName.trim()) {
       setStatus("Please enter a name.")
       return
     }
 
+<<<<<<< HEAD
     try {
       // ✅ PROPER TYPE HANDLING FOR getLatLngs()
       const rawLatLngs = polygon.getLatLngs()
@@ -66,6 +87,21 @@ export default function ZoneControls({ onZoneSaved, drawnPolygon, latestPolyRef 
         geojson,
       }) // Debug log
 
+=======
+    const latlngs = latestPolyRef.current.getLatLngs()[0].map((ll: any) => [ll.lng, ll.lat])
+    if (latlngs.length < 3) {
+      setStatus("Polygon needs at least 3 points.")
+      return
+    }
+
+    if (latlngs[0][0] !== latlngs[latlngs.length - 1][0] || latlngs[0][1] !== latlngs[latlngs.length - 1][1]) {
+      latlngs.push(latlngs[0])
+    }
+
+    const geojson = { type: "Polygon", coordinates: [latlngs] }
+
+    try {
+>>>>>>> bbc8bab (Initial commit)
       const res = await fetch(`${API}/api/zones/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -80,12 +116,20 @@ export default function ZoneControls({ onZoneSaved, drawnPolygon, latestPolyRef 
       if (data.ok) {
         setStatus("Zone saved ✔. It will appear on dashboard & tourist app.")
         setZoneName("")
+<<<<<<< HEAD
+=======
+        latestPolyRef.current = null
+>>>>>>> bbc8bab (Initial commit)
         onZoneSaved()
       } else {
         setStatus("Error: " + JSON.stringify(data))
       }
     } catch (err) {
+<<<<<<< HEAD
       setStatus("Failed to save zone: " + String(err))
+=======
+      setStatus("Failed to save zone")
+>>>>>>> bbc8bab (Initial commit)
       console.error(err)
     }
   }

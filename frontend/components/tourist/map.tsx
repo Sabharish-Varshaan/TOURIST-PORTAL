@@ -13,8 +13,12 @@ interface TouristMapProps {
 
 export default function TouristMap({ touristId }: TouristMapProps) {
   const mapRef = useRef<L.Map | null>(null)
+<<<<<<< HEAD
   const [geoMsg, setGeoMsg] = useState("🔄 Initializing geofence monitoring...")
   const [geoStatus, setGeoStatus] = useState<"safe" | "warning" | "danger" | "loading">("loading")
+=======
+  const [geoMsg, setGeoMsg] = useState("Geofence monitoring: waiting for location...")
+>>>>>>> bbc8bab (Initial commit)
   const userMarkerRef = useRef<L.CircleMarker | null>(null)
   const zonesRef = useRef<any[]>([])
   const currentZoneRef = useRef<any>(null)
@@ -54,7 +58,11 @@ export default function TouristMap({ touristId }: TouristMapProps) {
         const coords = z.geojson.coordinates[0].map(([lng, lat]: [number, number]) => [lat, lng])
         const color = z.zone_type === "TERROR" ? "#ef4444" : z.zone_type === "RESTRICTED" ? "#f59e0b" : "#f43f5e"
         const poly = L.polygon(coords, { color, weight: 2, fillOpacity: 0.2 }).addTo(mapRef.current!)
+<<<<<<< HEAD
         poly.bindTooltip(`${z.zone_type}: ${z.name} (max ${z.dwell_minutes} min)`, { permanent: false })
+=======
+        poly.bindTooltip(`${z.zone_type}: ${z.name} (dwell ${z.dwell_minutes} min)`)
+>>>>>>> bbc8bab (Initial commit)
       })
     } catch (err) {
       console.error("Failed to fetch zones:", err)
@@ -66,14 +74,22 @@ export default function TouristMap({ touristId }: TouristMapProps) {
       navigator.geolocation.watchPosition(
         onGeo,
         () => {
+<<<<<<< HEAD
           setGeoMsg("❌ Unable to get location (check permissions)")
           setGeoStatus("warning")
+=======
+          setGeoMsg("Unable to get location (check permissions).")
+>>>>>>> bbc8bab (Initial commit)
         },
         { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 },
       )
     } else {
+<<<<<<< HEAD
       setGeoMsg("❌ Geolocation not supported")
       setGeoStatus("warning")
+=======
+      setGeoMsg("Geolocation not supported.")
+>>>>>>> bbc8bab (Initial commit)
     }
   }
 
@@ -84,6 +100,7 @@ export default function TouristMap({ touristId }: TouristMapProps) {
     lastKnownRef.current = { lat, lng, ts: Date.now() }
 
     if (!userMarkerRef.current) {
+<<<<<<< HEAD
       userMarkerRef.current = L.circleMarker([lat, lng], {
         radius: 8,
         fillColor: "#3b82f6",
@@ -91,6 +108,9 @@ export default function TouristMap({ touristId }: TouristMapProps) {
         weight: 2,
         fillOpacity: 0.9,
       }).addTo(mapRef.current!)
+=======
+      userMarkerRef.current = L.circleMarker([lat, lng], { radius: 6 }).addTo(mapRef.current!)
+>>>>>>> bbc8bab (Initial commit)
       mapRef.current!.setView([lat, lng], 15)
     } else {
       userMarkerRef.current.setLatLng([lat, lng])
@@ -112,8 +132,12 @@ export default function TouristMap({ touristId }: TouristMapProps) {
     if (inside && (!currentZoneRef.current || currentZoneRef.current.id !== inside.id)) {
       currentZoneRef.current = inside
       enterTimeRef.current = Date.now()
+<<<<<<< HEAD
       setGeoMsg(`⚠️ Entered ${inside.zone_type} zone: ${inside.name}`)
       setGeoStatus("danger")
+=======
+      setGeoMsg(`Entered ${inside.zone_type} zone: ${inside.name}. Monitoring dwell...`)
+>>>>>>> bbc8bab (Initial commit)
       beep()
 
       if (dwellTimerRef.current) clearInterval(dwellTimerRef.current)
@@ -121,28 +145,45 @@ export default function TouristMap({ touristId }: TouristMapProps) {
         if (!currentZoneRef.current) return
         const elapsedSec = Math.floor((Date.now() - (enterTimeRef.current || 0)) / 1000)
         const dwellLimitSec = (currentZoneRef.current.dwell_minutes || 5) * 60
+<<<<<<< HEAD
         const minutes = Math.floor(elapsedSec / 60)
         const seconds = elapsedSec % 60
         setGeoMsg(
           `⚠️ Inside ${currentZoneRef.current.zone_type} zone (${currentZoneRef.current.name}) — ${minutes}m ${seconds}s`,
+=======
+        setGeoMsg(
+          `Inside ${currentZoneRef.current.zone_type} (${currentZoneRef.current.name}) — ${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s`,
+>>>>>>> bbc8bab (Initial commit)
         )
         if (elapsedSec >= dwellLimitSec) {
           clearInterval(dwellTimerRef.current!)
           await notifyDwell(elapsedSec)
           beep()
+<<<<<<< HEAD
           setGeoMsg(`🚨 Dwell limit exceeded — authorities notified!`)
         }
       }, 5000)
     } else if (!inside && currentZoneRef.current) {
       setGeoMsg(`✅ Exited ${currentZoneRef.current.zone_type} zone: ${currentZoneRef.current.name}`)
       setGeoStatus("safe")
+=======
+          setGeoMsg(`Dwell threshold exceeded — officers notified.`)
+        }
+      }, 5000)
+    } else if (!inside && currentZoneRef.current) {
+      setGeoMsg(`Exited ${currentZoneRef.current.zone_type} zone: ${currentZoneRef.current.name}.`)
+>>>>>>> bbc8bab (Initial commit)
       currentZoneRef.current = null
       if (dwellTimerRef.current) clearInterval(dwellTimerRef.current)
       dwellTimerRef.current = null
       enterTimeRef.current = null
     } else if (!inside) {
+<<<<<<< HEAD
       setGeoMsg("✅ You are in a safe zone")
       setGeoStatus("safe")
+=======
+      setGeoMsg("Outside restricted/danger zones.")
+>>>>>>> bbc8bab (Initial commit)
     }
   }
 
@@ -192,6 +233,7 @@ export default function TouristMap({ touristId }: TouristMapProps) {
     } catch (e) {}
   }
 
+<<<<<<< HEAD
   const getStatusColor = () => {
     switch (geoStatus) {
       case "safe":
@@ -231,6 +273,13 @@ export default function TouristMap({ touristId }: TouristMapProps) {
           <p className="flex-1">{geoMsg}</p>
         </div>
       </div>
+=======
+  return (
+    <div className="bg-white rounded-4xl shadow-lg p-5 mb-4">
+      <h1 className="text-2xl font-bold mb-3">Live Map & Geofence</h1>
+      <div id="tourist-map" className="w-full h-80 rounded-3xl"></div>
+      <p className="text-gray-600 text-sm mt-3">{geoMsg}</p>
+>>>>>>> bbc8bab (Initial commit)
     </div>
   )
 }

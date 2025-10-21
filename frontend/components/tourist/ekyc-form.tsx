@@ -18,12 +18,19 @@ export default function EKYCForm({ touristId }: EKYCFormProps) {
 
   const handleSubmit = async () => {
     if (!file || !idNumber.trim()) {
+<<<<<<< HEAD
       setActionStatus("⚠️ Please choose a file and enter ID number")
+=======
+      setActionStatus("Please choose a file and enter ID number")
+>>>>>>> bbc8bab (Initial commit)
       return
     }
 
     setLoading(true)
+<<<<<<< HEAD
     setActionStatus("")
+=======
+>>>>>>> bbc8bab (Initial commit)
     try {
       const fd = new FormData()
       fd.append("tourist_id", touristId)
@@ -37,17 +44,24 @@ export default function EKYCForm({ touristId }: EKYCFormProps) {
       })
       const data = await res.json()
       setKycStatus(data.kyc_status || "PENDING")
+<<<<<<< HEAD
       setActionStatus(
         `${data.kyc_status === "VERIFIED" ? "✅" : data.kyc_status === "REJECTED" ? "❌" : "⏳"} KYC Status: ${data.kyc_status} • ${data.kyc_doc_type || ""} • ${data.kyc_id_masked || ""}`,
       )
     } catch (err) {
       setActionStatus("❌ KYC submission failed")
+=======
+      setActionStatus(`KYC result: ${data.kyc_status} | ${data.kyc_doc_type || ""} | ${data.kyc_id_masked || ""}`)
+    } catch (err) {
+      setActionStatus("KYC submission failed")
+>>>>>>> bbc8bab (Initial commit)
       console.error(err)
     } finally {
       setLoading(false)
     }
   }
 
+<<<<<<< HEAD
   const getStatusBadgeColor = () => {
     if (kycStatus === "VERIFIED") return "bg-green-100 text-green-700 border-green-200"
     if (kycStatus === "REJECTED") return "bg-red-100 text-red-700 border-red-200"
@@ -76,10 +90,33 @@ export default function EKYCForm({ touristId }: EKYCFormProps) {
           >
             <option value="AADHAAR">🇮🇳 Aadhaar (India)</option>
             <option value="PASSPORT">🌍 Passport (International)</option>
+=======
+  const getStatusColor = () => {
+    if (kycStatus === "VERIFIED") return "bg-green-100 text-green-800"
+    if (kycStatus === "REJECTED") return "bg-red-100 text-red-800"
+    return "bg-yellow-100 text-yellow-800"
+  }
+
+  return (
+    <div className="bg-white rounded-4xl shadow-lg p-5 mb-4">
+      <h1 className="text-2xl font-bold mb-4">eKYC Verification</h1>
+
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <div>
+          <label className="block font-semibold mb-2">Document Type</label>
+          <select
+            value={docType}
+            onChange={(e) => setDocType(e.target.value)}
+            className="w-full p-3 border border-gray-300 rounded-3xl text-base"
+          >
+            <option value="AADHAAR">Aadhaar (India)</option>
+            <option value="PASSPORT">Passport (Other countries)</option>
+>>>>>>> bbc8bab (Initial commit)
           </select>
         </div>
 
         <div>
+<<<<<<< HEAD
           <label className="block text-sm font-semibold text-gray-700 mb-2">ID Number</label>
           <input
             type="text"
@@ -87,19 +124,35 @@ export default function EKYCForm({ touristId }: EKYCFormProps) {
             value={idNumber}
             onChange={(e) => setIdNumber(e.target.value)}
             className="w-full px-4 py-3 border border-gray-300 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+=======
+          <label className="block font-semibold mb-2">ID Number</label>
+          <input
+            type="text"
+            placeholder="Aadhaar (12 digits) or Passport number"
+            value={idNumber}
+            onChange={(e) => setIdNumber(e.target.value)}
+            className="w-full p-3 border border-gray-300 rounded-3xl text-base"
+>>>>>>> bbc8bab (Initial commit)
           />
         </div>
       </div>
 
+<<<<<<< HEAD
       <div className="mb-6">
         <label className="block text-sm font-semibold text-gray-700 mb-2">
           Upload Document (PDF, JPG, PNG)
         </label>
         <div className="relative">
+=======
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <div>
+          <label className="block font-semibold mb-2">Upload Document (PDF/JPG/PNG)</label>
+>>>>>>> bbc8bab (Initial commit)
           <input
             type="file"
             accept=".pdf,.jpg,.jpeg,.png"
             onChange={(e) => setFile(e.target.files?.[0] || null)}
+<<<<<<< HEAD
             className="w-full px-4 py-3 border border-gray-300 rounded-2xl text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
           />
         </div>
@@ -115,11 +168,22 @@ export default function EKYCForm({ touristId }: EKYCFormProps) {
             {file.name} ({(file.size / 1024).toFixed(1)} KB)
           </p>
         )}
+=======
+            className="w-full p-3 border border-gray-300 rounded-3xl text-base"
+          />
+        </div>
+
+        <div>
+          <label className="block font-semibold mb-2">Status</label>
+          <div className={`inline-block px-3 py-2 rounded-full font-bold text-sm ${getStatusColor()}`}>{kycStatus}</div>
+        </div>
+>>>>>>> bbc8bab (Initial commit)
       </div>
 
       <button
         onClick={handleSubmit}
         disabled={loading}
+<<<<<<< HEAD
         style={{ backgroundColor: loading ? "#94a3b8" : "var(--primary)" }}
         className="w-full text-white py-3.5 rounded-2xl font-semibold text-base hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl flex items-center justify-center"
       >
@@ -175,6 +239,15 @@ export default function EKYCForm({ touristId }: EKYCFormProps) {
           {actionStatus}
         </div>
       )}
+=======
+        style={{ backgroundColor: "var(--primary)" }}
+        className="w-full text-white p-3 rounded-3xl font-semibold hover:opacity-90 disabled:opacity-50 mb-3"
+      >
+        {loading ? "Verifying..." : "Verify eKYC"}
+      </button>
+
+      {actionStatus && <p className="text-gray-600 text-sm">{actionStatus}</p>}
+>>>>>>> bbc8bab (Initial commit)
     </div>
   )
 }
