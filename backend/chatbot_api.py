@@ -1252,53 +1252,64 @@ def generate_itinerary_plan_response(itinerary_text: str) -> str:
 
 @chatbot_router.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(chat_request: ChatMessage):
-    """
-    Main, unified chat endpoint that handles greetings, itinerary planning,
-    and general conversation in a single flow.
-    """
     session = get_or_create_session(chat_request.session_id)
     user_message = chat_request.message
-    
-    # Add user message to session history
     session.add_message("user", user_message)
 
-    # 1. DETECT THE USER'S INTENT
+    # Intent detection
     intent = detect_intent(user_message)
-    
-    final_response = ""
-    suggestions = []
 
-    try:
-        # 2. ROUTE TO THE CORRECT LOGIC BASED ON INTENT
-        if intent == "greeting":
-            final_response = "Hi! I am your personal travel assistant. 🤖\nPlease provide your itinerary by listing the places you want to visit (e.g., 'Taj Mahal -> Agra Fort'), and I'll create a detailed plan for you!"
-            suggestions = ["Plan a trip to Delhi", "Taj Mahal -> Agra Fort", "Weather in Mumbai"]
-
-        elif intent == "itinerary_plan":
-            print("Intent detected: Itinerary Plan. Generating details...")
-            final_response = generate_itinerary_plan_response(user_message)
-            suggestions = ["Tell me more about the first place", "What should I wear?", "Are these places crowded?"]
-            
-        else: # This is a "general_query"
-            print("Intent detected: General Query. Generating conversational response...")
-            response_data = await generate_enhanced_response(user_message, session)
-            final_response = response_data["response"]
-            suggestions = response_data["suggestions"]
-
-        # 3. ADD THE BOT'S RESPONSE TO SESSION HISTORY
-        session.add_message("assistant", final_response)
-        
-        return ChatResponse(
-            response=final_response,
-            session_id=session.session_id,
-            suggestions=suggestions
+    if intent == "greeting":
+        final_response = (
+            "👋 Hi there! I'm your TravelBuddy. "
+            "I can help you plan your trips, provide weather updates, "
+            "share safety tips, or translate phrases. What would you like to do today?"
         )
+        suggestions = ["Plan a trip", "Weather update", "Local attractions"]
+
+    elif intent == "itinerary_plan":
+        # Generate detailed itinerary response with map links and weather
+        final_response = generate_itinerary_plan_response(user_message)
+        suggestions = ["Tell me more about the first place", "What should I wear?", "Are these places crowded?"]
+
+    else:
+        # Extract travel context for a tailored response
+        travel_context = extract_travel_context(user_message, session)
+        system_prompt = build_system_prompt(session, travel_context)
+
+        # Call AI model to generate response
+        ai_response = await chat_with_groq(session.get_recent_messages(), system_prompt)
         
-    except Exception as e:
-        print(f"An error occurred in the chat endpoint: {e}")
-        error_response = "I'm sorry, something went wrong on my end. Please try rephrasing your message."
-        session.add_message("assistant", error_response)
-        return ChatResponse(response=error_response, session_id=session.session_id)
+        # Rewrite AI response for clarity and friendliness
+        final_response = rewrite_with_groq(ai_response)
+
+        # Suggestions based on intent/context
+        if travel_context.get("travel_intent") == "planning":
+            suggestions = [
+                "What's the weather like there?",
+                "Tell me about local attractions",
+                "What's the best time to visit?"
+            ]
+        elif travel_context.get("travel_intent") == "weather_inquiry":
+            suggestions = [
+                "What should I pack?",
+                "Are there indoor activities?",
+                "What's the forecast for the next few days?"
+            ]
+        else:
+            suggestions = [
+                "Can you help me plan an itinerary?",
+                "What's the weather forecast?",
+                "Tell me about local attractions",
+                "Give me travel tips"
+            ]
+
+    session.add_message("assistant", final_response)
+    return ChatResponse(
+        response=final_response,
+        session_id=session.session_id,
+        suggestions=suggestions
+    )
 
 print("HAS_OWM=", bool(OPENWEATHER_API_KEY),
       "HAS_GROQ=", bool(GROQ_API_KEY))
