@@ -8,11 +8,18 @@ import "leaflet-draw"
 
 interface AdminMapProps {
   zones: any[]
+  onPolygonDrawn?: (polygon: L.Polygon) => void
 }
 
-export default function AdminMap({ zones }: AdminMapProps) {
+export default function AdminMap({ zones, onPolygonDrawn }: AdminMapProps) {
   const mapRef = useRef<L.Map | null>(null)
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null)
+  const callbackRef = useRef(onPolygonDrawn) // ✅ Store callback in ref to avoid dependency issues
+
+  // ✅ Update callback ref when it changes
+  useEffect(() => {
+    callbackRef.current = onPolygonDrawn
+  }, [onPolygonDrawn])
 
   useEffect(() => {
     if (!mapRef.current) {
@@ -38,6 +45,29 @@ export default function AdminMap({ zones }: AdminMapProps) {
         edit: { featureGroup: drawnItems },
       })
       map.addControl(drawControl)
+
+      // ✅ EVENT HANDLER - Listen for both created and edited
+      map.on("draw:created", function(e: any) {
+        console.log("draw:created event fired") // Debug log
+        drawnItems.clearLayers()
+        const layer = e.layer
+        drawnItems.addLayer(layer)
+        
+        if (callbackRef.current) {
+          callbackRef.current(layer as L.Polygon)
+        }
+      })
+
+      // ✅ Also listen for edits in case user modifies the polygon
+      map.on("draw:edited", function(e: any) {
+        console.log("draw:edited event fired") // Debug log
+        const layers = e.layers
+        layers.eachLayer((layer: any) => {
+          if (callbackRef.current) {
+            callbackRef.current(layer as L.Polygon)
+          }
+        })
+      })
 
       mapRef.current = map
     }
