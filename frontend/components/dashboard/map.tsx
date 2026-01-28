@@ -24,11 +24,7 @@ export default function DashboardMap({ tourists, logs }: DashboardMapProps) {
     })
 
     const loadHeatLayer = async () => {
-<<<<<<< HEAD
-      if (typeof window !== "undefined" && !(window.L as any)?.heatLayer) {
-=======
-      if (typeof window !== "undefined" && !window.L?.heatLayer) {
->>>>>>> bbc8bab (Initial commit)
+      if (typeof window !== "undefined" && !(L as any).heatLayer) {
         const script = document.createElement("script")
         script.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"
         script.async = true
@@ -47,28 +43,24 @@ export default function DashboardMap({ tourists, logs }: DashboardMapProps) {
 
       setTimeout(() => {
         updateHeatmap()
-<<<<<<< HEAD
         loadZones()
       }, 500)
     }
 
-    // ✅ LOAD ZONES FROM API
+    // Load zones from API and draw polygons
     const loadZones = async () => {
       try {
         const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
         const res = await fetch(`${api}/api/zones`)
         const zones = await res.json()
 
-        // Clear previous zone layers
         zoneLayersRef.current.forEach((layer) => mapRef.current?.removeLayer(layer))
         zoneLayersRef.current = []
 
-        // Draw zones on map
         zones.forEach((z: any) => {
           try {
             const coords = z.geojson.coordinates[0].map(([lng, lat]: [number, number]) => [lat, lng])
-            const color =
-              z.zone_type === "TERROR" ? "#ef4444" : z.zone_type === "RESTRICTED" ? "#f59e0b" : "#f43f5e"
+            const color = z.zone_type === "TERROR" ? "#ef4444" : z.zone_type === "RESTRICTED" ? "#f59e0b" : "#f43f5e"
             const polygon = L.polygon(coords, {
               color,
               weight: 2,
@@ -86,11 +78,6 @@ export default function DashboardMap({ tourists, logs }: DashboardMapProps) {
       }
     }
 
-=======
-      }, 500)
-    }
-
->>>>>>> bbc8bab (Initial commit)
     const updateHeatmap = () => {
       const pts = tourists
         .filter((t) => t.last_lat && t.last_lat !== "-" && t.last_lng && t.last_lng !== "-")
@@ -101,23 +88,15 @@ export default function DashboardMap({ tourists, logs }: DashboardMapProps) {
           return [lat, lng, w]
         })
 
-<<<<<<< HEAD
-      if ((window.L as any)?.heatLayer && mapRef.current) {
+      if ((L as any).heatLayer && mapRef.current) {
         if (heatLayerRef.current) {
           heatLayerRef.current.setLatLngs(pts)
         } else if (pts.length > 0) {
-          heatLayerRef.current = (window.L as any).heatLayer(pts, {
+          heatLayerRef.current = (L as any).heatLayer(pts, {
             radius: 28,
             blur: 18,
             maxZoom: 17,
           }).addTo(mapRef.current)
-=======
-      if (window.L?.heatLayer && mapRef.current) {
-        if (heatLayerRef.current) {
-          heatLayerRef.current.setLatLngs(pts)
-        } else if (pts.length > 0) {
-          heatLayerRef.current = L.heatLayer(pts, { radius: 28, blur: 18, maxZoom: 17 }).addTo(mapRef.current)
->>>>>>> bbc8bab (Initial commit)
         }
       }
     }
@@ -127,11 +106,7 @@ export default function DashboardMap({ tourists, logs }: DashboardMapProps) {
       if (t.last_lat && t.last_lat !== "-" && t.last_lng && t.last_lng !== "-") {
         const key = t.id
         const latlng: [number, number] = [Number.parseFloat(t.last_lat), Number.parseFloat(t.last_lng)]
-<<<<<<< HEAD
         const iconEmoji = t.status === "ALERT" ? "🔴" : "🔵"
-=======
-        const iconEmoji = t.status === "ALERT" ? "ðŸ”´" : "ðŸ”µ"
->>>>>>> bbc8bab (Initial commit)
 
         if (!markersRef.current[key]) {
           markersRef.current[key] = L.marker(latlng).addTo(mapRef.current!)
@@ -156,8 +131,4 @@ export default function DashboardMap({ tourists, logs }: DashboardMapProps) {
       <div id="dashboard-map" className="flex-1 rounded-2xl" style={{ minHeight: "400px" }}></div>
     </div>
   )
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> bbc8bab (Initial commit)

@@ -1,65 +1,41 @@
 "use client"
 
-<<<<<<< HEAD
-import { useState, RefObject } from "react"
+import { useState, useRef, type RefObject } from "react"
 import L from "leaflet"
-=======
-import { useState, useRef } from "react"
->>>>>>> bbc8bab (Initial commit)
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
 interface ZoneControlsProps {
   onZoneSaved: () => void
-<<<<<<< HEAD
-  drawnPolygon: L.Polygon | null
-  latestPolyRef: RefObject<L.Polygon | null>
+  drawnPolygon?: L.Polygon | null
+  latestPolyRef?: RefObject<L.Polygon | null>
 }
 
 export default function ZoneControls({ onZoneSaved, drawnPolygon, latestPolyRef }: ZoneControlsProps) {
-=======
-}
-
-export default function ZoneControls({ onZoneSaved }: ZoneControlsProps) {
->>>>>>> bbc8bab (Initial commit)
   const [zoneName, setZoneName] = useState("")
   const [zoneType, setZoneType] = useState("RESTRICTED")
   const [dwellMinutes, setDwellMinutes] = useState(5)
   const [status, setStatus] = useState("Draw a polygon on the right and then save it.")
-<<<<<<< HEAD
+
+  const internalLatestRef = useRef<any>(null)
 
   const handleSaveZone = async () => {
-    // ✅ USE THE REF FIRST, FALLBACK TO STATE
-    const polygon = latestPolyRef.current || drawnPolygon
-    
-    console.log("Save zone clicked. Polygon:", polygon) // Debug log
-    
+    const polygon = (latestPolyRef && latestPolyRef.current) || internalLatestRef.current || drawnPolygon
+
     if (!polygon) {
       setStatus("Please draw a polygon first.")
       return
     }
 
-=======
-  const latestPolyRef = useRef<any>(null)
-
-  const handleSaveZone = async () => {
-    if (!latestPolyRef.current) {
-      setStatus("Please draw a polygon first.")
-      return
-    }
->>>>>>> bbc8bab (Initial commit)
     if (!zoneName.trim()) {
       setStatus("Please enter a name.")
       return
     }
 
-<<<<<<< HEAD
     try {
-      // ✅ PROPER TYPE HANDLING FOR getLatLngs()
       const rawLatLngs = polygon.getLatLngs()
       let latlngs: [number, number][]
 
-      // Check if it's a nested array (polygon with holes)
       if (rawLatLngs.length > 0 && Array.isArray(rawLatLngs[0])) {
         latlngs = (rawLatLngs[0] as L.LatLng[]).map((ll) => [ll.lng, ll.lat])
       } else {
@@ -71,7 +47,6 @@ export default function ZoneControls({ onZoneSaved }: ZoneControlsProps) {
         return
       }
 
-      // Close the polygon if not already closed
       const firstPoint = latlngs[0]
       const lastPoint = latlngs[latlngs.length - 1]
       if (firstPoint[0] !== lastPoint[0] || firstPoint[1] !== lastPoint[1]) {
@@ -85,23 +60,8 @@ export default function ZoneControls({ onZoneSaved }: ZoneControlsProps) {
         zone_type: zoneType,
         dwell_minutes: dwellMinutes,
         geojson,
-      }) // Debug log
+      })
 
-=======
-    const latlngs = latestPolyRef.current.getLatLngs()[0].map((ll: any) => [ll.lng, ll.lat])
-    if (latlngs.length < 3) {
-      setStatus("Polygon needs at least 3 points.")
-      return
-    }
-
-    if (latlngs[0][0] !== latlngs[latlngs.length - 1][0] || latlngs[0][1] !== latlngs[latlngs.length - 1][1]) {
-      latlngs.push(latlngs[0])
-    }
-
-    const geojson = { type: "Polygon", coordinates: [latlngs] }
-
-    try {
->>>>>>> bbc8bab (Initial commit)
       const res = await fetch(`${API}/api/zones/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -116,20 +76,14 @@ export default function ZoneControls({ onZoneSaved }: ZoneControlsProps) {
       if (data.ok) {
         setStatus("Zone saved ✔. It will appear on dashboard & tourist app.")
         setZoneName("")
-<<<<<<< HEAD
-=======
-        latestPolyRef.current = null
->>>>>>> bbc8bab (Initial commit)
+        if (latestPolyRef && latestPolyRef.current) latestPolyRef.current = null
+        internalLatestRef.current = null
         onZoneSaved()
       } else {
         setStatus("Error: " + JSON.stringify(data))
       }
     } catch (err) {
-<<<<<<< HEAD
       setStatus("Failed to save zone: " + String(err))
-=======
-      setStatus("Failed to save zone")
->>>>>>> bbc8bab (Initial commit)
       console.error(err)
     }
   }

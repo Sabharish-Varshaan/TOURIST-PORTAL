@@ -3,17 +3,10 @@
 import { useState, useEffect } from "react"
 import "leaflet/dist/leaflet.css"
 import TouristRegistration from "@/components/tourist/registration"
-<<<<<<< HEAD
 import TouristMap from "@/components/tourist/map-wrapper"
 import EKYCForm from "@/components/tourist/ekyc-form"
-import QRCard from "@/components/tourist/qr-card-simple"  // ← USE THE NEW FILE
+import QRCard from "@/components/tourist/qr-card-simple"
 import TouristChatbot from "@/components/tourist/chatbot"
-
-=======
-import TouristMap from "@/components/tourist/map"
-import EKYCForm from "@/components/tourist/ekyc-form"
-import QRCard from "@/components/tourist/qr-card"
->>>>>>> bbc8bab (Initial commit)
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
@@ -41,7 +34,6 @@ export default function TouristPage() {
   }
 
   return (
-<<<<<<< HEAD
     <div style={{ backgroundColor: "var(--bg)" }} className="min-h-screen py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6">
         {!registered ? (
@@ -103,33 +95,6 @@ export default function TouristPage() {
               </div>
             </div>
           </div>
-=======
-    <div style={{ backgroundColor: "var(--bg)" }} className="min-h-screen">
-      <div className="max-w-3xl mx-auto p-5">
-        {!registered ? (
-          <TouristRegistration onRegister={handleRegister} />
-        ) : (
-          <>
-            <QRCard touristId={touristId!} qrCode={qrCode!} />
-            <TouristMap touristId={touristId!} />
-            <EKYCForm touristId={touristId!} />
-            <div
-              style={{ backgroundColor: "var(--card)", color: "var(--muted)" }}
-              className="mt-6 p-5 rounded-2xl text-sm"
-            >
-              <p>Tip: Keep this tab open for live safety tracking.</p>
-              <p className="mt-2">
-                <a href="/dashboard" style={{ color: "var(--accent)" }} className="hover:underline">
-                  Open Authority Dashboard
-                </a>{" "}
-                •
-                <a href="/admin" style={{ color: "var(--accent)" }} className="hover:underline ml-2">
-                  Open Admin
-                </a>
-              </p>
-            </div>
-          </>
->>>>>>> bbc8bab (Initial commit)
         )}
       </div>
     </div>

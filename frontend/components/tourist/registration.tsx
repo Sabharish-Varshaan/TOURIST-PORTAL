@@ -17,23 +17,15 @@ export default function TouristRegistration({ onRegister }: TouristRegistrationP
 
   const handleRegister = async () => {
     if (!name.trim() || !phone.trim() || !emergency.trim()) {
-<<<<<<< HEAD
       setStatus("⚠️ Please fill all fields")
-=======
-      setStatus("Please fill all fields")
->>>>>>> bbc8bab (Initial commit)
       return
     }
 
     setLoading(true)
-<<<<<<< HEAD
     setStatus("")
     try {
       console.log("📤 Sending registration request to:", `${API}/api/register`)
-      
-=======
-    try {
->>>>>>> bbc8bab (Initial commit)
+
       const res = await fetch(`${API}/api/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -43,64 +35,41 @@ export default function TouristRegistration({ onRegister }: TouristRegistrationP
           emergency_contact: emergency.trim(),
         }),
       })
-<<<<<<< HEAD
 
+      const data = await res.json()
       console.log("📨 Response status:", res.status)
 
       if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`)
+        const msg = data?.detail || `HTTP ${res.status}`
+        throw new Error(msg)
       }
 
-      const data = await res.json()
       console.log("📦 Full API Response:", data)
-      console.log("🆔 Tourist ID:", data.tourist_id)
-      console.log("🖼️  QR Code exists:", !!data.qr_png_base64)
-      console.log("📏 QR Code length:", data.qr_png_base64?.length || 0)
-      console.log("🔤 QR Code first 50 chars:", data.qr_png_base64?.substring(0, 50) || "EMPTY")
-
       const touristId = data.tourist_id
       const qrCode = data.qr_png_base64
 
-      if (!touristId) {
-        console.error("❌ Missing tourist_id in response")
-        setStatus("❌ Registration failed: Missing tourist ID")
-        return
-      }
-
-      if (!qrCode) {
-        console.error("❌ Missing qr_png_base64 in response. Full response keys:", Object.keys(data))
-        console.error("❌ Response ", JSON.stringify(data, null, 2))
-        setStatus("❌ Registration failed: Backend didn't return QR code. Check server logs.")
+      if (!touristId || !qrCode) {
+        console.error("❌ Incomplete response:", data)
+        setStatus("❌ Registration failed: incomplete server response")
         return
       }
 
       console.log("✅ Registration successful! Calling onRegister...")
       onRegister(touristId, qrCode)
       setStatus("✅ Registered successfully!")
-      
-      // Clear form
       setName("")
       setPhone("")
       setEmergency("")
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Unknown error'
+      const errorMsg = err instanceof Error ? err.message : "Unknown error"
       console.error("❌ Registration error:", err)
       setStatus(`❌ Registration failed: ${errorMsg}`)
-=======
-      const data = await res.json()
-      onRegister(data.tourist_id, data.qr_png_base64)
-      setStatus("Registered! Scroll down for your Digital ID.")
-    } catch (err) {
-      setStatus("Registration failed. Try again.")
-      console.error(err)
->>>>>>> bbc8bab (Initial commit)
     } finally {
       setLoading(false)
     }
   }
 
   return (
-<<<<<<< HEAD
     <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-8 border border-gray-100">
       <div className="text-center mb-8">
         <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
@@ -154,50 +123,11 @@ export default function TouristRegistration({ onRegister }: TouristRegistrationP
             onChange={(e) => setEmergency(e.target.value)}
             className="w-full px-4 py-3 border border-gray-300 rounded-2xl text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
           />
-=======
-    <div className="bg-white rounded-4xl shadow-lg p-5 mb-4">
-      <h1 className="text-2xl font-bold mb-3">Register & Get Digital ID</h1>
-
-      <div className="space-y-4">
-        <div>
-          <label className="block font-semibold mb-2">Name</label>
-          <input
-            type="text"
-            placeholder="Your full name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full p-3 border border-gray-300 rounded-3xl text-base"
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block font-semibold mb-2">Phone</label>
-            <input
-              type="text"
-              placeholder="+91-xxxxxxxxxx"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              className="w-full p-3 border border-gray-300 rounded-3xl text-base"
-            />
-          </div>
-          <div>
-            <label className="block font-semibold mb-2">Emergency Contact</label>
-            <input
-              type="text"
-              placeholder="+91-xxxxxxxxxx"
-              value={emergency}
-              onChange={(e) => setEmergency(e.target.value)}
-              className="w-full p-3 border border-gray-300 rounded-3xl text-base"
-            />
-          </div>
->>>>>>> bbc8bab (Initial commit)
         </div>
 
         <button
           onClick={handleRegister}
           disabled={loading}
-<<<<<<< HEAD
           style={{ backgroundColor: loading ? "#94a3b8" : "var(--primary)" }}
           className="w-full text-white py-3.5 rounded-2xl font-semibold text-base hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl"
         >
@@ -244,22 +174,12 @@ export default function TouristRegistration({ onRegister }: TouristRegistrationP
           </div>
         )}
 
-        {/* Debug Info Box - Remove in production */}
         <div className="p-3 bg-gray-100 rounded-2xl text-xs text-gray-700 font-mono max-h-24 overflow-y-auto">
           <p className="font-bold mb-1">🔧 Debug Info (Remove in Production):</p>
           <p>API: {API}</p>
           <p>Status: {loading ? "Loading..." : "Ready"}</p>
           <p>Check browser console (F12) for detailed logs</p>
         </div>
-=======
-          style={{ backgroundColor: "var(--primary)" }}
-          className="w-full text-white p-3 rounded-3xl font-semibold hover:opacity-90 disabled:opacity-50"
-        >
-          {loading ? "Registering..." : "Register & Generate QR"}
-        </button>
-
-        {status && <p className="text-gray-600 text-sm">{status}</p>}
->>>>>>> bbc8bab (Initial commit)
       </div>
     </div>
   )
