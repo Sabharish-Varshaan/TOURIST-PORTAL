@@ -13,18 +13,21 @@ backend.zip
 # Ignore database files
 *.db
 *.sqlite
+guardianid.db
 
 # Ignore Python cache files
 __pycache__/
 *.py[cod]
 
-# Ignore Python venv
-.venv/
-**/.venv/
-
 # Ignore Node.js build files
 node_modules/
 .next/
+
+# Ignore Python virtual environments
+venv/
+.venv/
+env/
+.env/
 
 # Ignore logs
 *.log
@@ -33,3 +36,4 @@ node_modules/
 # Ignore system files
 .DS_Store
 .vscode/
+*/guardianid.db
