@@ -25,6 +25,8 @@ export default function TouristRegistration({ onRegister }: TouristRegistrationP
     setStatus("")
     try {
       console.log("📤 Sending registration request to:", `${API}/api/register`)
+      console.log("🌐 API Base URL:", API)
+      
       const res = await fetch(`${API}/api/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -38,7 +40,9 @@ export default function TouristRegistration({ onRegister }: TouristRegistrationP
       console.log("📨 Response status:", res.status)
 
       if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`)
+        const errorText = await res.text()
+        console.error("🔴 Backend error response:", errorText)
+        throw new Error(`HTTP error! status: ${res.status} - ${errorText}`)
       }
 
       const data = await res.json()
@@ -75,7 +79,15 @@ export default function TouristRegistration({ onRegister }: TouristRegistrationP
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error'
       console.error("❌ Registration error:", err)
-      setStatus(`❌ Registration failed: ${errorMsg}`)
+      
+      // Provide helpful error messages
+      if (errorMsg.includes("Failed to fetch")) {
+        setStatus(`❌ Cannot reach backend at ${API}. Check if backend is running.`)
+      } else if (errorMsg.includes("CORS")) {
+        setStatus("❌ CORS error - Backend not configured for frontend requests")
+      } else {
+        setStatus(`❌ Registration failed: ${errorMsg}`)
+      }
     } finally {
       setLoading(false)
     }
