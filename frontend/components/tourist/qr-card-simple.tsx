@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { offlineFetch } from "@/lib/offline/sync"
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
@@ -14,6 +15,7 @@ export default function QRCard({ touristId, qrCode }: QRCardProps) {
   const [actionStatus, setActionStatus] = useState("")
   const [loading, setLoading] = useState(false)
   const [qrDataUrl, setQrDataUrl] = useState("")
+  const [smsHref, setSmsHref] = useState<string>("")
 
   // ✅ Create data URL only on client side after mount
   useEffect(() => {
@@ -51,6 +53,7 @@ export default function QRCard({ touristId, qrCode }: QRCardProps) {
   const handleSOS = async () => {
     setLoading(true)
     setActionStatus("📍 Getting your location...")
+    setSmsHref("")
 
     try {
       const coords = await new Promise<{ latitude: number; longitude: number } | null>((resolve) => {
@@ -103,17 +106,43 @@ export default function QRCard({ touristId, qrCode }: QRCardProps) {
       if (coords) {
         body.lat = coords.latitude
         body.lng = coords.longitude
+      } else {
+        // fallback: last known from live map (if available)
+        try {
+          const latStr = localStorage.getItem(`guardianid:tourist:${touristId}:last_lat`)
+          const lngStr = localStorage.getItem(`guardianid:tourist:${touristId}:last_lng`)
+          const lat = latStr ? Number(latStr) : NaN
+          const lng = lngStr ? Number(lngStr) : NaN
+          if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            body.lat = lat
+            body.lng = lng
+          }
+        } catch {}
       }
 
-      const res = await fetch(`${API}/api/sos`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      })
-      const data = await res.json()
+      const result = await offlineFetch(
+        `${API}/api/sos`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        { type: "sos" },
+      )
+
+      if (result.queued) {
+        const locText = body.lat ? `${Number(body.lat).toFixed(4)}, ${Number(body.lng).toFixed(4)}` : "unknown"
+        const msg = `SOS (offline queued)\nTouristID: ${touristId}\nLoc: ${locText}\nLabel: ${body.location_label}`
+        setSmsHref(`sms:112?body=${encodeURIComponent(msg)}`)
+        setActionStatus(`📴 Offline: SOS queued for sync. Use SMS fallback now. • Location: ${locText}`)
+        return
+      }
+
+      const res = result.response
+      const data = res ? await res.json() : {}
       setActionStatus(
         `🚨 SOS SENT! ${data.message || ""} ${
-          body.lat ? `• Location: ${body.lat.toFixed(4)}, ${body.lng.toFixed(4)}` : "• Location unavailable"
+          body.lat ? `• Location: ${Number(body.lat).toFixed(4)}, ${Number(body.lng).toFixed(4)}` : "• Location unavailable"
         }`,
       )
     } catch (err) {
@@ -225,6 +254,23 @@ export default function QRCard({ touristId, qrCode }: QRCardProps) {
           {actionStatus}
         </div>
       )}
+
+      {smsHref ? (
+        <div className="mt-4 p-4 rounded-2xl border bg-yellow-50 border-yellow-200">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-semibold text-yellow-800">SMS fallback (no data required)</div>
+            <a
+              href={smsHref}
+              className="px-4 py-2 rounded-xl bg-yellow-600 text-white text-sm font-semibold hover:bg-yellow-700"
+            >
+              Send SMS to 112
+            </a>
+          </div>
+          <div className="mt-2 text-xs text-yellow-800 opacity-80">
+            This sends a prefilled SMS with your tourist ID and last known location.
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

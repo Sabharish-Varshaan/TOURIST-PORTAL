@@ -4,21 +4,50 @@ import { useEffect, useRef, useState } from "react"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 import * as turf from "@turf/turf"
+import NavigationPanel, { type NavLatLng, type NavRoute } from "./navigation-panel"
+import { offlineFetch } from "@/lib/offline/sync"
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+const TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 
 interface TouristMapProps {
   touristId: string
 }
 
+function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const R = 6371000
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+function bearingDeg(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const toDeg = (r: number) => (r * 180) / Math.PI
+  const y = Math.sin(toRad(lng2 - lng1)) * Math.cos(toRad(lat2))
+  const x =
+    Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+    Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lng2 - lng1))
+  return (toDeg(Math.atan2(y, x)) + 360) % 360
+}
+
+function latLngToTileXY(lat: number, lng: number, z: number) {
+  const n = 2 ** z
+  const x = Math.floor(((lng + 180) / 360) * n)
+  const latRad = (lat * Math.PI) / 180
+  const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n)
+  return { x, y }
+}
+
 export default function TouristMap({ touristId }: TouristMapProps) {
   const mapRef = useRef<L.Map | null>(null)
-<<<<<<< HEAD
   const [geoMsg, setGeoMsg] = useState("🔄 Initializing geofence monitoring...")
   const [geoStatus, setGeoStatus] = useState<"safe" | "warning" | "danger" | "loading">("loading")
-=======
-  const [geoMsg, setGeoMsg] = useState("Geofence monitoring: waiting for location...")
->>>>>>> bbc8bab (Initial commit)
+  const [currentPos, setCurrentPos] = useState<NavLatLng | null>(null)
   const userMarkerRef = useRef<L.CircleMarker | null>(null)
   const zonesRef = useRef<any[]>([])
   const currentZoneRef = useRef<any>(null)
@@ -30,10 +59,24 @@ export default function TouristMap({ touristId }: TouristMapProps) {
     ts: null,
   })
 
+  // ---- Navigation state ----
+  const navRouteRef = useRef<NavRoute | null>(null)
+  const navPolylineRef = useRef<L.Polyline | null>(null)
+  const navIdxRef = useRef<number>(0)
+  const [navActive, setNavActive] = useState(false)
+  const [navBanner, setNavBanner] = useState<string>("")
+  const [navIdx, setNavIdx] = useState<number>(0)
+
+  // ---- Offline map download state ----
+  const [tileZoomMin, setTileZoomMin] = useState<number>(13)
+  const [tileZoomMax, setTileZoomMax] = useState<number>(15)
+  const [tileStatus, setTileStatus] = useState<string>("")
+  const [tileBusy, setTileBusy] = useState(false)
+
   useEffect(() => {
     if (!mapRef.current) {
       const map = L.map("tourist-map").setView([26.1725, 91.744], 14)
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      L.tileLayer(TILE_URL, {
         maxZoom: 19,
         attribution: "&copy; OpenStreetMap",
       }).addTo(map)
@@ -53,19 +96,34 @@ export default function TouristMap({ touristId }: TouristMapProps) {
       const res = await fetch(`${API}/api/zones`)
       const zones = await res.json()
       zonesRef.current = zones
+      try {
+        localStorage.setItem(`guardianid:zones_cache`, JSON.stringify(zones))
+      } catch {}
 
       zones.forEach((z: any) => {
         const coords = z.geojson.coordinates[0].map(([lng, lat]: [number, number]) => [lat, lng])
         const color = z.zone_type === "TERROR" ? "#ef4444" : z.zone_type === "RESTRICTED" ? "#f59e0b" : "#f43f5e"
         const poly = L.polygon(coords, { color, weight: 2, fillOpacity: 0.2 }).addTo(mapRef.current!)
-<<<<<<< HEAD
         poly.bindTooltip(`${z.zone_type}: ${z.name} (max ${z.dwell_minutes} min)`, { permanent: false })
-=======
-        poly.bindTooltip(`${z.zone_type}: ${z.name} (dwell ${z.dwell_minutes} min)`)
->>>>>>> bbc8bab (Initial commit)
       })
     } catch (err) {
       console.error("Failed to fetch zones:", err)
+      // Offline fallback: cached zones
+      try {
+        const cached = localStorage.getItem(`guardianid:zones_cache`)
+        if (cached) {
+          const zones = JSON.parse(cached)
+          zonesRef.current = zones
+          zones.forEach((z: any) => {
+            const coords = z.geojson.coordinates[0].map(([lng, lat]: [number, number]) => [lat, lng])
+            const color =
+              z.zone_type === "TERROR" ? "#ef4444" : z.zone_type === "RESTRICTED" ? "#f59e0b" : "#f43f5e"
+            const poly = L.polygon(coords, { color, weight: 2, fillOpacity: 0.2 }).addTo(mapRef.current!)
+            poly.bindTooltip(`${z.zone_type}: ${z.name} (cached)`, { permanent: false })
+          })
+          setGeoMsg("📦 Loaded cached zones (offline)")
+        }
+      } catch {}
     }
   }
 
@@ -74,22 +132,14 @@ export default function TouristMap({ touristId }: TouristMapProps) {
       navigator.geolocation.watchPosition(
         onGeo,
         () => {
-<<<<<<< HEAD
           setGeoMsg("❌ Unable to get location (check permissions)")
           setGeoStatus("warning")
-=======
-          setGeoMsg("Unable to get location (check permissions).")
->>>>>>> bbc8bab (Initial commit)
         },
         { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 },
       )
     } else {
-<<<<<<< HEAD
       setGeoMsg("❌ Geolocation not supported")
       setGeoStatus("warning")
-=======
-      setGeoMsg("Geolocation not supported.")
->>>>>>> bbc8bab (Initial commit)
     }
   }
 
@@ -98,9 +148,14 @@ export default function TouristMap({ touristId }: TouristMapProps) {
     const lng = pos.coords.longitude
 
     lastKnownRef.current = { lat, lng, ts: Date.now() }
+    setCurrentPos({ lat, lng })
+    try {
+      localStorage.setItem(`guardianid:tourist:${touristId}:last_lat`, String(lat))
+      localStorage.setItem(`guardianid:tourist:${touristId}:last_lng`, String(lng))
+      localStorage.setItem(`guardianid:tourist:${touristId}:last_ts`, String(Date.now()))
+    } catch {}
 
     if (!userMarkerRef.current) {
-<<<<<<< HEAD
       userMarkerRef.current = L.circleMarker([lat, lng], {
         radius: 8,
         fillColor: "#3b82f6",
@@ -108,15 +163,13 @@ export default function TouristMap({ touristId }: TouristMapProps) {
         weight: 2,
         fillOpacity: 0.9,
       }).addTo(mapRef.current!)
-=======
-      userMarkerRef.current = L.circleMarker([lat, lng], { radius: 6 }).addTo(mapRef.current!)
->>>>>>> bbc8bab (Initial commit)
       mapRef.current!.setView([lat, lng], 15)
     } else {
       userMarkerRef.current.setLatLng([lat, lng])
     }
 
     sendGPS(lat, lng)
+    updateNavigation(lat, lng)
 
     const pt = turf.point([lng, lat])
     let inside = null
@@ -132,12 +185,8 @@ export default function TouristMap({ touristId }: TouristMapProps) {
     if (inside && (!currentZoneRef.current || currentZoneRef.current.id !== inside.id)) {
       currentZoneRef.current = inside
       enterTimeRef.current = Date.now()
-<<<<<<< HEAD
       setGeoMsg(`⚠️ Entered ${inside.zone_type} zone: ${inside.name}`)
       setGeoStatus("danger")
-=======
-      setGeoMsg(`Entered ${inside.zone_type} zone: ${inside.name}. Monitoring dwell...`)
->>>>>>> bbc8bab (Initial commit)
       beep()
 
       if (dwellTimerRef.current) clearInterval(dwellTimerRef.current)
@@ -145,55 +194,42 @@ export default function TouristMap({ touristId }: TouristMapProps) {
         if (!currentZoneRef.current) return
         const elapsedSec = Math.floor((Date.now() - (enterTimeRef.current || 0)) / 1000)
         const dwellLimitSec = (currentZoneRef.current.dwell_minutes || 5) * 60
-<<<<<<< HEAD
         const minutes = Math.floor(elapsedSec / 60)
         const seconds = elapsedSec % 60
         setGeoMsg(
           `⚠️ Inside ${currentZoneRef.current.zone_type} zone (${currentZoneRef.current.name}) — ${minutes}m ${seconds}s`,
-=======
-        setGeoMsg(
-          `Inside ${currentZoneRef.current.zone_type} (${currentZoneRef.current.name}) — ${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s`,
->>>>>>> bbc8bab (Initial commit)
         )
         if (elapsedSec >= dwellLimitSec) {
           clearInterval(dwellTimerRef.current!)
           await notifyDwell(elapsedSec)
           beep()
-<<<<<<< HEAD
           setGeoMsg(`🚨 Dwell limit exceeded — authorities notified!`)
         }
       }, 5000)
     } else if (!inside && currentZoneRef.current) {
       setGeoMsg(`✅ Exited ${currentZoneRef.current.zone_type} zone: ${currentZoneRef.current.name}`)
       setGeoStatus("safe")
-=======
-          setGeoMsg(`Dwell threshold exceeded — officers notified.`)
-        }
-      }, 5000)
-    } else if (!inside && currentZoneRef.current) {
-      setGeoMsg(`Exited ${currentZoneRef.current.zone_type} zone: ${currentZoneRef.current.name}.`)
->>>>>>> bbc8bab (Initial commit)
       currentZoneRef.current = null
       if (dwellTimerRef.current) clearInterval(dwellTimerRef.current)
       dwellTimerRef.current = null
       enterTimeRef.current = null
     } else if (!inside) {
-<<<<<<< HEAD
       setGeoMsg("✅ You are in a safe zone")
       setGeoStatus("safe")
-=======
-      setGeoMsg("Outside restricted/danger zones.")
->>>>>>> bbc8bab (Initial commit)
     }
   }
 
   const sendGPS = async (lat: number, lng: number) => {
     try {
-      await fetch(`${API}/api/gps`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tourist_id: touristId, lat, lng }),
-      })
+      await offlineFetch(
+        `${API}/api/gps`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tourist_id: touristId, lat, lng }),
+        },
+        { type: "gps", coalesceKey: `gps:${touristId}` },
+      )
     } catch (err) {
       console.error("GPS send failed:", err)
     }
@@ -202,15 +238,19 @@ export default function TouristMap({ touristId }: TouristMapProps) {
   const notifyDwell = async (secondsInside: number) => {
     if (!currentZoneRef.current) return
     try {
-      await fetch(`${API}/api/geofence/dwell`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tourist_id: touristId,
-          zone_id: currentZoneRef.current.id,
-          seconds_inside: secondsInside,
-        }),
-      })
+      await offlineFetch(
+        `${API}/api/geofence/dwell`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tourist_id: touristId,
+            zone_id: currentZoneRef.current.id,
+            seconds_inside: secondsInside,
+          }),
+        },
+        { type: "geofence_dwell" },
+      )
     } catch (err) {
       console.error("Dwell notify failed:", err)
     }
@@ -233,7 +273,6 @@ export default function TouristMap({ touristId }: TouristMapProps) {
     } catch (e) {}
   }
 
-<<<<<<< HEAD
   const getStatusColor = () => {
     switch (geoStatus) {
       case "safe":
@@ -244,6 +283,157 @@ export default function TouristMap({ touristId }: TouristMapProps) {
         return "bg-red-100 text-red-700 border-red-200"
       default:
         return "bg-blue-100 text-blue-700 border-blue-200"
+    }
+  }
+
+  const drawRoute = (route: NavRoute) => {
+    if (!mapRef.current) return
+    const coordsLatLng = (route.line?.coordinates || []).map(([lng, lat]) => [lat, lng] as [number, number])
+
+    if (navPolylineRef.current) {
+      try {
+        navPolylineRef.current.remove()
+      } catch {}
+      navPolylineRef.current = null
+    }
+
+    if (coordsLatLng.length > 1) {
+      navPolylineRef.current = L.polyline(coordsLatLng, { color: "#2563eb", weight: 5, opacity: 0.9 }).addTo(
+        mapRef.current,
+      )
+      try {
+        mapRef.current.fitBounds(navPolylineRef.current.getBounds(), { padding: [24, 24] })
+      } catch {}
+    }
+  }
+
+  const stopNavigation = () => {
+    setNavActive(false)
+    setNavBanner("")
+    navRouteRef.current = null
+    navIdxRef.current = 0
+    setNavIdx(0)
+    if (navPolylineRef.current) {
+      try {
+        navPolylineRef.current.remove()
+      } catch {}
+      navPolylineRef.current = null
+    }
+  }
+
+  const handleRouteLoaded = (route: NavRoute) => {
+    navRouteRef.current = route
+    navIdxRef.current = 0
+    setNavIdx(0)
+    setNavActive(true)
+    setNavBanner("Navigation started. Move to get instructions.")
+    drawRoute(route)
+  }
+
+  const updateNavigation = (lat: number, lng: number) => {
+    if (!navActive) return
+    const route = navRouteRef.current
+    if (!route) return
+
+    const steps = route.steps || []
+    const idx = navIdxRef.current
+    const next = steps[idx]
+
+    if (next?.maneuverLatLng) {
+      const d = haversineMeters(lat, lng, next.maneuverLatLng.lat, next.maneuverLatLng.lng)
+      const meters = Math.round(d)
+      setNavBanner(`Next: ${next.instruction} in ${meters}m`)
+      if (d < 20 && idx < steps.length - 1) {
+        navIdxRef.current = idx + 1
+        setNavIdx(idx + 1)
+        try {
+          navigator.vibrate?.(120)
+        } catch {}
+        beep()
+      }
+      return
+    }
+
+    if (route.to) {
+      const d = haversineMeters(lat, lng, route.to.lat, route.to.lng)
+      const b = bearingDeg(lat, lng, route.to.lat, route.to.lng)
+      setNavBanner(`Go ~${Math.round(d)}m, bearing ${Math.round(b)}° to destination`)
+    }
+  }
+
+  const downloadOfflineTiles = async () => {
+    if (!mapRef.current) return
+    if (!("caches" in window)) {
+      setTileStatus("Cache API not available in this browser.")
+      return
+    }
+    const bounds = mapRef.current.getBounds()
+    const sw = bounds.getSouthWest()
+    const ne = bounds.getNorthEast()
+
+    const zMin = Math.min(tileZoomMin, tileZoomMax)
+    const zMax = Math.max(tileZoomMin, tileZoomMax)
+
+    const tiles: { z: number; x: number; y: number }[] = []
+    for (let z = zMin; z <= zMax; z++) {
+      const t1 = latLngToTileXY(ne.lat, sw.lng, z)
+      const t2 = latLngToTileXY(sw.lat, ne.lng, z)
+      const xMin = Math.min(t1.x, t2.x)
+      const xMax = Math.max(t1.x, t2.x)
+      const yMin = Math.min(t1.y, t2.y)
+      const yMax = Math.max(t1.y, t2.y)
+      for (let x = xMin; x <= xMax; x++) {
+        for (let y = yMin; y <= yMax; y++) {
+          tiles.push({ z, x, y })
+        }
+      }
+    }
+
+    const hardLimit = 1200
+    if (tiles.length > hardLimit) {
+      setTileStatus(`Selected area is too big (${tiles.length} tiles). Zoom in or reduce zoom range.`)
+      return
+    }
+
+    setTileBusy(true)
+    setTileStatus(`Downloading ${tiles.length} tiles…`)
+    try {
+      const cache = await caches.open("guardianid-tiles-v1")
+      let done = 0
+      const concurrency = 8
+
+      for (let i = 0; i < tiles.length; i += concurrency) {
+        const batch = tiles.slice(i, i + concurrency)
+        await Promise.all(
+          batch.map(async (t) => {
+            const tileUrl = `https://tile.openstreetmap.org/${t.z}/${t.x}/${t.y}.png`
+            const req = new Request(tileUrl, { mode: "no-cors" })
+            const existing = await cache.match(req)
+            if (existing) return
+            const res = await fetch(req)
+            if (res && (res.ok || res.type === "opaque")) {
+              await cache.put(req, res)
+            }
+          }),
+        )
+        done += batch.length
+        setTileStatus(`Downloading ${tiles.length} tiles… (${done}/${tiles.length})`)
+      }
+
+      setTileStatus(`Offline area cached: ${tiles.length} tiles.`)
+    } catch (e) {
+      setTileStatus(`Tile download failed: ${String((e as any)?.message || e)}`)
+    } finally {
+      setTileBusy(false)
+    }
+  }
+
+  const clearOfflineTiles = async () => {
+    try {
+      await caches.delete("guardianid-tiles-v1")
+      setTileStatus("Cleared offline tiles cache.")
+    } catch {
+      setTileStatus("Failed to clear offline tiles cache.")
     }
   }
 
@@ -273,13 +463,69 @@ export default function TouristMap({ touristId }: TouristMapProps) {
           <p className="flex-1">{geoMsg}</p>
         </div>
       </div>
-=======
-  return (
-    <div className="bg-white rounded-4xl shadow-lg p-5 mb-4">
-      <h1 className="text-2xl font-bold mb-3">Live Map & Geofence</h1>
-      <div id="tourist-map" className="w-full h-80 rounded-3xl"></div>
-      <p className="text-gray-600 text-sm mt-3">{geoMsg}</p>
->>>>>>> bbc8bab (Initial commit)
+
+      {navActive && navBanner ? (
+        <div className="mt-4 p-4 rounded-2xl border bg-blue-50 border-blue-200 text-blue-800 text-sm font-semibold">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex-1">{navBanner}</div>
+            <div className="text-xs font-bold opacity-80">
+              Step {Math.min(navIdx + 1, (navRouteRef.current?.steps?.length || 1))}/{navRouteRef.current?.steps?.length || 1}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-6">
+        <NavigationPanel touristId={touristId} current={currentPos} onRouteLoaded={handleRouteLoaded} onStop={stopNavigation} />
+      </div>
+
+      <div className="mt-6 bg-white rounded-3xl shadow-xl p-6 border border-gray-100">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h3 className="text-xl font-bold text-gray-900">Offline maps</h3>
+          <div className="text-xs font-semibold text-gray-600">Cache tiles for this view</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-xs font-semibold text-gray-600">Zoom</label>
+          <select
+            value={tileZoomMin}
+            onChange={(e) => setTileZoomMin(Number(e.target.value))}
+            className="rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white"
+          >
+            {[10, 11, 12, 13, 14, 15, 16].map((z) => (
+              <option key={z} value={z}>
+                min {z}
+              </option>
+            ))}
+          </select>
+          <select
+            value={tileZoomMax}
+            onChange={(e) => setTileZoomMax(Number(e.target.value))}
+            className="rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white"
+          >
+            {[12, 13, 14, 15, 16, 17].map((z) => (
+              <option key={z} value={z}>
+                max {z}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={tileBusy}
+            onClick={downloadOfflineTiles}
+            className="px-4 py-3 rounded-2xl bg-gray-900 text-white text-sm font-semibold hover:bg-black disabled:opacity-60"
+          >
+            {tileBusy ? "Downloading…" : "Download offline area"}
+          </button>
+          <button
+            type="button"
+            onClick={clearOfflineTiles}
+            className="px-4 py-3 rounded-2xl border border-gray-200 text-sm font-semibold hover:bg-gray-50"
+          >
+            Clear offline tiles
+          </button>
+        </div>
+        {tileStatus ? <div className="mt-3 text-sm text-gray-700">{tileStatus}</div> : null}
+      </div>
     </div>
   )
 }

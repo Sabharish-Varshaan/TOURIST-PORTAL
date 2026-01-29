@@ -40,27 +40,16 @@ export default function DashboardPage() {
   }
 
   return (
-    <div style={{ backgroundColor: "var(--monitor-surface)" }} className="min-h-screen">
-      <div className="w-full h-screen p-4 flex flex-col">
-        <div style={{ color: "var(--muted)" }} className="flex justify-between items-center gap-4 mb-2">
-          <div style={{ color: "var(--text)" }} className="font-bold">
-            GuardianID Authority Dashboard
-          </div>
-          <div className="text-sm">Live  Heatmap  eKYC  Incidents Ticketing</div>
-        </div>
+    <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
+      <div className="space-y-6">
+        <TouristLookup tourists={tourists} logs={logs} />
+        <QuickStats tourists={tourists} logs={logs} />
+        <RecentIncidents logs={logs} />
+      </div>
 
-        <div className="grid grid-cols-[300px_1fr] gap-4 flex-1">
-          <div className="flex flex-col gap-3 overflow-y-auto">
-            <TouristLookup tourists={tourists} logs={logs} />
-            <QuickStats tourists={tourists} logs={logs} />
-            <RecentIncidents logs={logs} />
-          </div>
-
-          <div className="flex flex-col gap-3">
-            <DashboardMap tourists={tourists} logs={logs} />
-            <IncidentFeed logs={logs} onRefresh={() => setRefreshTrigger((prev) => prev + 1)} />
-          </div>
-        </div>
+      <div className="space-y-6">
+        <DashboardMap tourists={tourists} logs={logs} />
+        <IncidentFeed logs={logs} onRefresh={() => setRefreshTrigger((prev) => prev + 1)} />
       </div>
     </div>
   )

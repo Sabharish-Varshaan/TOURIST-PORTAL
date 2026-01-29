@@ -1,6 +1,15 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
+import { useChat } from "@/lib/chat"
+import { useCallState } from "@/lib/use-call-state"
+import ChatPanel from "@/components/chat/chat-panel"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Separator } from "@/components/ui/separator"
 
 interface TouristLookupProps {
   tourists: any[]
@@ -37,92 +46,161 @@ export default function TouristLookup({ tourists, logs }: TouristLookupProps) {
   }
 
   const touristIncidents = selectedTourist ? logs.filter((l) => l.tourist_id === selectedTourist.id) : []
+  const chatThread = selectedTourist
+    ? { thread_type: "tourist_authority" as const, tourist_id: selectedTourist.id }
+    : null
+  const callMessageRef = useRef<(data: Record<string, unknown>) => void>(() => {})
+  const { messages, connected, sendMessage, sendCallAction } = useChat(chatThread, {
+    onCallMessage: (data) => callMessageRef.current(data),
+  })
+  const callState = useCallState(chatThread, sendCallAction, {
+    callerRole: "authority",
+    callerId: "dashboard",
+  })
+  useEffect(() => {
+    callMessageRef.current = callState.handleMessage
+  }, [callState.handleMessage])
 
   return (
-    <div style={{ backgroundColor: "var(--card)", color: "#140000ff" }} className="rounded-2xl p-3">
-      <div style={{ color: "#ff0000ff"}} className="text-xs mb-2">
-        <b>Tourist Lookup</b>
-      </div>
-
-      <div className="flex gap-2 mb-3">
-        <input
-          type="text"
-          placeholder="Enter Tourist ID"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          style={{ color: "var(--text)" }}
-          className="flex-1 p-2 rounded-2xl border border-gray-700 bg-transparent text-sm"
-        />
-        <button
-          onClick={handleSearch}
-          style={{ backgroundColor: "var(--accent)", color: "#207bfbff" }}
-          className="px-3 py-2 rounded-2xl font-bold text-sm hover:opacity-90"
-        >
-          Get Details
-        </button>
-      </div>
-
-      {selectedTourist && (
-        <div className="bg-black bg-opacity-20 p-2 rounded-2xl text-xs space-y-1">
-          <div className="font-bold">{selectedTourist.name}</div>
-          <div style={{ color: "#ffd7d7ff" }}>ID: {selectedTourist.id}</div>
-          <div style={{ color: "#ffccccff" }}>Phone: {selectedTourist.phone}</div>
-          <div style={{ color: "#ffccccff" }}>Emergency: {selectedTourist.emergency_contact}</div>
-          <div style={{ color: "#ffcfcfff" }}>Status: {selectedTourist.status}</div>
-          <div style={{ color: "#ffd4d4ff" }}>Last checkin: {selectedTourist.last_checkin}</div>
-          <div style={{ color: "#ffc5c5ff" }}>
-            KYC: {selectedTourist.kyc_status} {selectedTourist.kyc_doc_type ? `(${selectedTourist.kyc_doc_type})` : ""}{" "}
-            {selectedTourist.kyc_id_masked ? `- ${selectedTourist.kyc_id_masked}` : ""}
-          </div>
-          <div style={{ color: "#ffdadaff" }}>
-            Coords: {selectedTourist.last_lat || "-"} , {selectedTourist.last_lng || "-"}
-          </div>
-
-          <div className="flex justify-between items-center mt-2 pt-2 border-t border-gray-700">
-            <button
-              onClick={() => setSelectedTourist({ ...selectedTourist })}
-              style={{ backgroundColor: "var(--accent)", color: "#0e61d6ff" }}
-              className="px-2 py-1 rounded text-xs font-bold hover:opacity-90"
-            >
-              Refresh
-            </button>
-            <span style={{ color: "#ff6200ff" }} className="text-xs">
-              Updated: {new Date().toLocaleString()}
-            </span>
-          </div>
-
-          <button
-            onClick={() => setShowIncidents(!showIncidents)}
-            className="w-full bg-orange-600 text-white px-2 py-1 rounded text-xs font-bold hover:opacity-90 mt-2"
+    <Card className="py-0 dashboard-card fade-in-up">
+      <CardHeader className="border-b border-slate-200">
+        <CardTitle className="text-sm font-semibold bg-gradient-to-r from-slate-700 via-slate-600 to-slate-700 bg-clip-text text-transparent">
+          Tourist lookup
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-4">
+        <div className="flex gap-2">
+          <Input
+            placeholder="Enter tourist ID (or name)…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSearch()
+            }}
+            className="border-slate-300/60 focus:border-slate-400/60 focus:ring-2 focus:ring-slate-200/50 transition-all bg-white/80"
+          />
+          <Button
+            onClick={handleSearch}
+            className="bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white font-semibold shadow-sm transition-all hover:scale-105"
           >
-            {showIncidents ? "Hide incidents" : "Show incidents"}
-          </button>
-
-          {showIncidents && (
-            <div className="max-h-56 overflow-y-auto mt-2 space-y-1">
-              {touristIncidents.length === 0 ? (
-                <div style={{ color: "#ffffffff" }}>No incidents found.</div>
-              ) : (
-                touristIncidents.map((inc) => (
-                  <div key={inc.id} className="border-b border-gray-700 pb-1">
-                    <div className="font-bold text-xs">
-                      {inc.event_type} <span style={{ color: "#ffffffff" }}>#{inc.id}</span>
-                    </div>
-                    <div style={{ color: "#ffffffff" }} className="text-xs">
-                      {inc.location_label} • {inc.timestamp}
-                    </div>
-                    {inc.ticket_status && (
-                      <div style={{ color: "#ffffffff" }} className="text-xs">
-                        Ticket: {inc.ticket_status} {inc.ticket_assignee ? ` — ${inc.ticket_assignee}` : ""}
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          )}
+            Search
+          </Button>
         </div>
-      )}
-    </div>
+
+        {selectedTourist ? (
+          <div className="mt-4 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-base font-semibold truncate">{selectedTourist.name}</div>
+                <div className="text-xs text-muted-foreground font-mono">ID: {selectedTourist.id}</div>
+              </div>
+              <Badge variant={selectedTourist.status === "ALERT" ? "destructive" : "secondary"}>
+                {selectedTourist.status}
+              </Badge>
+            </div>
+
+            <Separator />
+
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3 hover:bg-slate-100/60 transition-colors">
+                <div className="text-xs text-slate-600">Phone</div>
+                <div className="mt-1 font-medium text-slate-800">{selectedTourist.phone}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3 hover:bg-slate-100/60 transition-colors">
+                <div className="text-xs text-slate-600">Emergency</div>
+                <div className="mt-1 font-medium text-slate-800">{selectedTourist.emergency_contact}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3 hover:bg-slate-100/60 transition-colors">
+                <div className="text-xs text-slate-600">Last check-in</div>
+                <div className="mt-1 font-medium text-slate-800 truncate">{selectedTourist.last_checkin}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3 hover:bg-slate-100/60 transition-colors">
+                <div className="text-xs text-slate-600">Last coords</div>
+                <div className="mt-1 font-medium text-slate-800">
+                  {selectedTourist.last_lat || "-"}, {selectedTourist.last_lng || "-"}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3 text-sm hover:bg-slate-100/60 transition-colors">
+              <div className="text-xs text-slate-600">eKYC</div>
+              <div className="mt-1 font-medium text-slate-800">
+                {selectedTourist.kyc_status}{" "}
+                {selectedTourist.kyc_doc_type ? `(${selectedTourist.kyc_doc_type})` : ""}
+                {selectedTourist.kyc_id_masked ? ` — ${selectedTourist.kyc_id_masked}` : ""}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <Button variant="outline" onClick={handleSearch}>
+                Refresh
+              </Button>
+              <Button
+                variant={showIncidents ? "secondary" : "outline"}
+                onClick={() => setShowIncidents((v) => !v)}
+              >
+                {showIncidents ? "Hide history" : "Show history"}
+              </Button>
+            </div>
+
+            <div className="mt-3">
+              <ChatPanel
+                title={`Chat with ${selectedTourist.name}`}
+                messages={messages}
+                connected={connected}
+                onSend={(body) => sendMessage(body, "authority", "dashboard")}
+                senderRole="authority"
+                senderId="dashboard"
+                callProps={{
+                  callStatus: callState.callStatus,
+                  activeCallId: callState.activeCallId,
+                  incomingCall: callState.incomingCall,
+                  onStartCall: callState.startCall,
+                  onAcceptCall: callState.acceptCall,
+                  onRejectCall: callState.rejectCall,
+                  onEndCall: callState.endCall,
+                }}
+              />
+            </div>
+
+            {showIncidents ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+                <div className="text-xs font-semibold mb-2 text-slate-800">Incident history</div>
+                {touristIncidents.length === 0 ? (
+                  <div className="text-sm text-slate-600">No incidents found.</div>
+                ) : (
+                  <ScrollArea className="h-56 pr-3">
+                    <div className="space-y-2">
+                      {touristIncidents.map((inc) => (
+                        <div key={inc.id} className="rounded-lg border border-slate-200 bg-white/60 p-2 hover:bg-slate-50/80 transition-colors">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs font-semibold text-slate-800">
+                              {(inc.event_type || "-").toUpperCase()} <span className="text-slate-600">#{inc.id}</span>
+                            </div>
+                            {inc.ticket_status ? (
+                              <Badge variant="outline" className="font-mono border-slate-300 text-slate-700">
+                                {inc.ticket_status}
+                              </Badge>
+                            ) : null}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-600">
+                            {inc.location_label} • {inc.timestamp}
+                          </div>
+                          {inc.ticket_assignee ? (
+                            <div className="mt-1 text-xs text-slate-600 truncate">Assignee: {inc.ticket_assignee}</div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                )}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="mt-4 text-sm text-muted-foreground">Search by tourist ID to view details.</div>
+        )}
+      </CardContent>
+    </Card>
   )
 }

@@ -18,6 +18,10 @@ backend.zip
 __pycache__/
 *.py[cod]
 
+# Ignore Python venv
+.venv/
+**/.venv/
+
 # Ignore Node.js build files
 node_modules/
 .next/

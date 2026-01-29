@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 interface DashboardMapProps {
   tourists: any[]
@@ -24,11 +25,7 @@ export default function DashboardMap({ tourists, logs }: DashboardMapProps) {
     })
 
     const loadHeatLayer = async () => {
-<<<<<<< HEAD
       if (typeof window !== "undefined" && !(window.L as any)?.heatLayer) {
-=======
-      if (typeof window !== "undefined" && !window.L?.heatLayer) {
->>>>>>> bbc8bab (Initial commit)
         const script = document.createElement("script")
         script.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"
         script.async = true
@@ -40,14 +37,13 @@ export default function DashboardMap({ tourists, logs }: DashboardMapProps) {
 
     if (!mapRef.current) {
       const map = L.map("dashboard-map").setView([26.1725, 91.744], 12)
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
       }).addTo(map)
       mapRef.current = map
 
       setTimeout(() => {
         updateHeatmap()
-<<<<<<< HEAD
         loadZones()
       }, 500)
     }
@@ -85,12 +81,6 @@ export default function DashboardMap({ tourists, logs }: DashboardMapProps) {
         console.error("Failed to load zones:", err)
       }
     }
-
-=======
-      }, 500)
-    }
-
->>>>>>> bbc8bab (Initial commit)
     const updateHeatmap = () => {
       const pts = tourists
         .filter((t) => t.last_lat && t.last_lat !== "-" && t.last_lng && t.last_lng !== "-")
@@ -101,7 +91,6 @@ export default function DashboardMap({ tourists, logs }: DashboardMapProps) {
           return [lat, lng, w]
         })
 
-<<<<<<< HEAD
       if ((window.L as any)?.heatLayer && mapRef.current) {
         if (heatLayerRef.current) {
           heatLayerRef.current.setLatLngs(pts)
@@ -111,13 +100,6 @@ export default function DashboardMap({ tourists, logs }: DashboardMapProps) {
             blur: 18,
             maxZoom: 17,
           }).addTo(mapRef.current)
-=======
-      if (window.L?.heatLayer && mapRef.current) {
-        if (heatLayerRef.current) {
-          heatLayerRef.current.setLatLngs(pts)
-        } else if (pts.length > 0) {
-          heatLayerRef.current = L.heatLayer(pts, { radius: 28, blur: 18, maxZoom: 17 }).addTo(mapRef.current)
->>>>>>> bbc8bab (Initial commit)
         }
       }
     }
@@ -127,11 +109,7 @@ export default function DashboardMap({ tourists, logs }: DashboardMapProps) {
       if (t.last_lat && t.last_lat !== "-" && t.last_lng && t.last_lng !== "-") {
         const key = t.id
         const latlng: [number, number] = [Number.parseFloat(t.last_lat), Number.parseFloat(t.last_lng)]
-<<<<<<< HEAD
         const iconEmoji = t.status === "ALERT" ? "🔴" : "🔵"
-=======
-        const iconEmoji = t.status === "ALERT" ? "ðŸ”´" : "ðŸ”µ"
->>>>>>> bbc8bab (Initial commit)
 
         if (!markersRef.current[key]) {
           markersRef.current[key] = L.marker(latlng).addTo(mapRef.current!)
@@ -144,20 +122,19 @@ export default function DashboardMap({ tourists, logs }: DashboardMapProps) {
   }, [tourists])
 
   return (
-    <div style={{ backgroundColor: "var(--card)" }} className="rounded-2xl p-2 flex-1 flex flex-col">
-      <div className="flex justify-between items-center mb-2">
-        <div className="font-bold" style={{ color: "#000000" }}>
-          Map: Live Tourists & Zones
+    <Card className="py-0 overflow-hidden dashboard-card fade-in-up-delay-3">
+      <CardHeader className="border-b border-slate-200">
+        <CardTitle className="text-sm font-semibold bg-gradient-to-r from-slate-700 via-slate-600 to-slate-700 bg-clip-text text-transparent">
+          Live map
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-4">
+        <div className="text-xs text-slate-600 mb-2 flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-slate-500 animate-pulse shadow-sm"></span>
+          Tourists heatmap + zones • auto-refresh every 5s
         </div>
-        <div className="text-xs" style={{ color: "#94a3b8" }}>
-          auto-refresh every 5s
-        </div>
-      </div>
-      <div id="dashboard-map" className="flex-1 rounded-2xl" style={{ minHeight: "400px" }}></div>
-    </div>
+        <div id="dashboard-map" className="w-full rounded-xl border border-slate-200 shadow-sm" style={{ minHeight: "420px" }} />
+      </CardContent>
+    </Card>
   )
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> bbc8bab (Initial commit)

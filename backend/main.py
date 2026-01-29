@@ -1,11 +1,14 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from datetime import datetime,timedelta
 from uuid import uuid4
 import base64, io, hashlib, re, json as pyjson
+import os
+import time
+import requests
 
 from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, ForeignKey, Float, text as sql_text
 
@@ -99,8 +102,11 @@ class Incident(Base):
     lng = Column(Float, nullable=True)
     
     # ✅ ADD THESE TWO NEW COLUMNS FOR THE TICKETING SYSTEM
-    ticket_status = Column(String, default="NEW") # NEW | ASSIGNED | RESOLVED
+    ticket_status = Column(String, default="NEW") # NEW | CONFIRMED | ASSIGNED | RESOLVED
     ticket_assignee = Column(String, nullable=True)
+    ticket_confirmed_at = Column(DateTime, nullable=True)
+    ticket_assigned_at = Column(DateTime, nullable=True)
+    ticket_resolved_at = Column(DateTime, nullable=True)
 
     tourist = relationship("Tourist", back_populates="incidents")
 
@@ -115,6 +121,18 @@ class Zone(Base):
     dwell_minutes = Column(Integer, default=5)       # minutes before escalation
     geojson = Column(Text, nullable=False)           # Stored as JSON string (GeoJSON Polygon/MultiPolygon)
 
+
+class Message(Base):
+    __tablename__ = "messages"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    thread_type = Column(String, nullable=False)     # tourist_authority | authority_responder
+    tourist_id = Column(String, ForeignKey("tourists.id"), nullable=True)
+    incident_id = Column(Integer, ForeignKey("incidents.id"), nullable=True)
+    sender_role = Column(String, nullable=False)     # tourist | authority | responder
+    sender_id = Column(String, nullable=True)       # tourist_id or responder id for display
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 Base.metadata.create_all(engine)
 
 # --- simple migration (adds columns if missing) ---
@@ -123,6 +141,35 @@ with engine.connect() as con:
     for needed in [("last_lat","TEXT"), ("last_lng","TEXT")]:
         if needed[0] not in cols:
             con.execute(sql_text(f"ALTER TABLE tourists ADD COLUMN {needed[0]} {needed[1]} DEFAULT '-'"))
+
+    # ticket lifecycle timestamps (safe add if missing)
+    inc_cols = [row[1] for row in con.execute(sql_text("PRAGMA table_info('incidents')")).fetchall()]
+    for needed in [
+        ("ticket_confirmed_at", "DATETIME"),
+        ("ticket_assigned_at", "DATETIME"),
+        ("ticket_resolved_at", "DATETIME"),
+    ]:
+        if needed[0] not in inc_cols:
+            con.execute(sql_text(f"ALTER TABLE incidents ADD COLUMN {needed[0]} {needed[1]}"))
+
+    # messages table for two-way chat
+    try:
+        con.execute(sql_text(
+            "CREATE TABLE IF NOT EXISTS messages ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "thread_type TEXT NOT NULL, "
+            "tourist_id TEXT, "
+            "incident_id INTEGER, "
+            "sender_role TEXT NOT NULL, "
+            "sender_id TEXT, "
+            "body TEXT NOT NULL, "
+            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+            "FOREIGN KEY (tourist_id) REFERENCES tourists(id), "
+            "FOREIGN KEY (incident_id) REFERENCES incidents(id))"
+        ))
+        con.commit()
+    except Exception:
+        pass
 
 # ---------------- Seed zones once ----------------
 def seed_zones_once():
@@ -239,6 +286,15 @@ class ZoneIn(BaseModel):
     zone_type: str  # DANGER | RESTRICTED | TERROR
     dwell_minutes: int
     geojson: Dict[str, Any]  # GeoJSON Polygon/MultiPolygon
+
+
+class MessageSendIn(BaseModel):
+    thread_type: str  # tourist_authority | authority_responder
+    tourist_id: Optional[str] = None
+    incident_id: Optional[int] = None
+    sender_role: str  # tourist | authority | responder
+    sender_id: Optional[str] = None
+    body: str
 
 # ---------------- Helpers ----------------
 def make_qr_base64(payload_text: str) -> str:
@@ -883,6 +939,32 @@ class AssignTicketIn(BaseModel):
     assignee_id: str
     assignee_name: str
 
+@app.post("/api/incidents/{incident_id}/confirm")
+def confirm_ticket(incident_id: int):
+    """
+    Control-room confirmation step.
+    Moves an SOS ticket from NEW -> CONFIRMED so responders can see/pick it.
+    """
+    db = SessionLocal()
+    try:
+        incident = db.get(Incident, incident_id)
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+
+        if (incident.event_type or "").lower() != "sos":
+            raise HTTPException(status_code=400, detail="Only SOS incidents can be confirmed")
+
+        current = (incident.ticket_status or "NEW").upper()
+        if current != "NEW":
+            raise HTTPException(status_code=409, detail=f"Cannot confirm incident in state {current}")
+
+        incident.ticket_status = "CONFIRMED"
+        incident.ticket_confirmed_at = datetime.utcnow()
+        db.commit()
+        return {"ok": True, "incident_id": incident.id, "status": incident.ticket_status}
+    finally:
+        db.close()
+
 @app.get("/api/substations")
 def get_substations():
     """Returns the list of available substations to assign tickets to."""
@@ -890,17 +972,28 @@ def get_substations():
 
 @app.post("/api/incidents/{incident_id}/assign")
 def assign_ticket(incident_id: int, payload: AssignTicketIn):
-    """Assigns an incident ticket to a specific unit."""
+    """
+    Responder pickup (Uber-style): claim a CONFIRMED SOS ticket.
+    Uses an atomic conditional update to avoid double-pick.
+    """
     db = SessionLocal()
     try:
-        incident = db.get(Incident, incident_id)
-        if not incident:
-            raise HTTPException(status_code=404, detail="Incident not found")
-        
-        incident.ticket_status = "ASSIGNED"
-        incident.ticket_assignee = f"{payload.assignee_name} ({payload.assignee_id})"
+        assignee = f"{payload.assignee_name} ({payload.assignee_id})"
+        now = datetime.utcnow()
+
+        updated = (
+            db.query(Incident)
+            .filter(Incident.id == incident_id, Incident.ticket_status == "CONFIRMED")
+            .update({"ticket_status": "ASSIGNED", "ticket_assignee": assignee, "ticket_assigned_at": now})
+        )
+        if updated != 1:
+            current = db.get(Incident, incident_id)
+            if not current:
+                raise HTTPException(status_code=404, detail="Incident not found")
+            raise HTTPException(status_code=409, detail=f"Ticket not available (status={current.ticket_status})")
+
         db.commit()
-        return {"ok": True, "incident_id": incident.id, "status": incident.ticket_status}
+        return {"ok": True, "incident_id": incident_id, "status": "ASSIGNED"}
     finally:
         db.close()
 
@@ -948,6 +1041,7 @@ def resolve_ticket(incident_id: int):
             raise HTTPException(status_code=404, detail="Incident not found")
         
         incident.ticket_status = "RESOLVED"
+        incident.ticket_resolved_at = datetime.utcnow()
         db.commit()
         return {"ok": True, "incident_id": incident.id, "status": incident.ticket_status}
     finally:
@@ -1023,11 +1117,511 @@ def logs():
                 "lng": lng_field,
                 "ticket_status": inc.ticket_status, # ✅ ADDED
                 "ticket_assignee": inc.ticket_assignee, # ✅ ADDED
+                "ticket_confirmed_at": to_ist(inc.ticket_confirmed_at) if inc.ticket_confirmed_at else None,
+                "ticket_assigned_at": to_ist(inc.ticket_assigned_at) if inc.ticket_assigned_at else None,
+                "ticket_resolved_at": to_ist(inc.ticket_resolved_at) if inc.ticket_resolved_at else None,
             })
         return out
     finally:
         db.close()
 
+
+# ---------------- Two-way chat: messages + WebSocket ----------------
+
+class ConnectionManager:
+    """In-memory WebSocket subscriber registry for chat broadcast."""
+    def __init__(self):
+        self.connections: list = []  # list of (WebSocket, set of (thread_type, tourist_id or incident_id))
+
+    def _thread_key(self, thread_type: str, tourist_id: Optional[str], incident_id: Optional[int]) -> tuple:
+        if thread_type == "tourist_authority" and tourist_id:
+            return ("tourist_authority", tourist_id)
+        if thread_type == "authority_responder" and incident_id is not None:
+            return ("authority_responder", incident_id)
+        raise ValueError("invalid thread")
+
+    async def subscribe(self, websocket: WebSocket, thread_type: str, tourist_id: Optional[str] = None, incident_id: Optional[int] = None):
+        key = self._thread_key(thread_type, tourist_id, incident_id)
+        for ws, threads in self.connections:
+            if ws == websocket:
+                threads.add(key)
+                return
+        self.connections.append((websocket, {key}))
+
+    async def broadcast_to_thread(self, thread_type: str, tourist_id: Optional[str], incident_id: Optional[int], payload: dict, exclude_ws: Optional[WebSocket] = None):
+        try:
+            key = self._thread_key(thread_type, tourist_id, incident_id)
+        except ValueError:
+            return
+        to_remove = []
+        for i, (ws, threads) in enumerate(self.connections):
+            if key not in threads or ws == exclude_ws:
+                continue
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                to_remove.append(i)
+        for i in reversed(to_remove):
+            self.connections.pop(i)
+
+    def disconnect(self, websocket: WebSocket):
+        self.connections = [(ws, t) for ws, t in self.connections if ws != websocket]
+
+
+chat_manager = ConnectionManager()
+# call_id -> { "caller_ws": WebSocket, "callee_ws": WebSocket|None, "thread_type", "tourist_id", "incident_id", "caller_role", "caller_id" }
+active_calls = {}
+
+
+@app.post("/api/messages")
+async def send_message(payload: MessageSendIn):
+    db = SessionLocal()
+    try:
+        if payload.thread_type == "tourist_authority":
+            if not payload.tourist_id:
+                raise HTTPException(status_code=400, detail="tourist_id required for tourist_authority")
+            t = db.get(Tourist, payload.tourist_id)
+            if not t:
+                raise HTTPException(status_code=404, detail="Tourist not found")
+            incident_id = None
+            tourist_id = payload.tourist_id
+        elif payload.thread_type == "authority_responder":
+            if payload.incident_id is None:
+                raise HTTPException(status_code=400, detail="incident_id required for authority_responder")
+            inc = db.get(Incident, payload.incident_id)
+            if not inc or (inc.ticket_status or "").upper() != "ASSIGNED":
+                raise HTTPException(status_code=400, detail="Incident not found or not ASSIGNED")
+            tourist_id = None
+            incident_id = payload.incident_id
+        else:
+            raise HTTPException(status_code=400, detail="thread_type must be tourist_authority or authority_responder")
+
+        msg = Message(
+            thread_type=payload.thread_type,
+            tourist_id=tourist_id,
+            incident_id=incident_id,
+            sender_role=payload.sender_role,
+            sender_id=payload.sender_id,
+            body=payload.body.strip() or "(empty)",
+        )
+        db.add(msg)
+        db.commit()
+        db.refresh(msg)
+        out = {
+            "id": msg.id,
+            "thread_type": msg.thread_type,
+            "tourist_id": msg.tourist_id,
+            "incident_id": msg.incident_id,
+            "sender_role": msg.sender_role,
+            "sender_id": msg.sender_id,
+            "body": msg.body,
+            "created_at": to_ist(msg.created_at),
+        }
+        await chat_manager.broadcast_to_thread(
+            payload.thread_type, tourist_id, incident_id,
+            {"type": "new_message", "message": out},
+        )
+        return out
+    finally:
+        db.close()
+
+
+@app.get("/api/messages")
+def list_messages(
+    thread_type: str = Query(...),
+    tourist_id: Optional[str] = Query(None),
+    incident_id: Optional[int] = Query(None),
+    limit: int = Query(100, le=500),
+):
+    if thread_type == "tourist_authority" and tourist_id:
+        tid, iid = tourist_id, None
+    elif thread_type == "authority_responder" and incident_id is not None:
+        tid, iid = None, incident_id
+    else:
+        raise HTTPException(status_code=400, detail="Provide tourist_id for tourist_authority or incident_id for authority_responder")
+    db = SessionLocal()
+    try:
+        q = db.query(Message).filter(Message.thread_type == thread_type)
+        if tid is not None:
+            q = q.filter(Message.tourist_id == tid)
+        else:
+            q = q.filter(Message.incident_id == iid)
+        rows = q.order_by(Message.created_at.desc()).limit(limit).all()
+        out = []
+        for m in reversed(rows):
+            out.append({
+                "id": m.id,
+                "thread_type": m.thread_type,
+                "tourist_id": m.tourist_id,
+                "incident_id": m.incident_id,
+                "sender_role": m.sender_role,
+                "sender_id": m.sender_id,
+                "body": m.body,
+                "created_at": to_ist(m.created_at),
+            })
+        return {"messages": out}
+    finally:
+        db.close()
+
+
+@app.websocket("/ws/chat")
+async def websocket_chat(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_json()
+            action = data.get("action")
+            if action == "subscribe":
+                thread_type = data.get("thread_type")
+                tourist_id = data.get("tourist_id")
+                incident_id = data.get("incident_id")
+                if thread_type and (tourist_id or incident_id is not None):
+                    await chat_manager.subscribe(websocket, thread_type, tourist_id, incident_id)
+                await websocket.send_json({"type": "subscribed", "thread_type": thread_type, "tourist_id": tourist_id, "incident_id": incident_id})
+            elif action == "start_call":
+                call_id = data.get("call_id") or str(uuid4())
+                thread_type = data.get("thread_type")
+                tourist_id = data.get("tourist_id")
+                incident_id = data.get("incident_id")
+                caller_role = data.get("caller_role", "")
+                caller_id = data.get("caller_id", "")
+                try:
+                    key = chat_manager._thread_key(thread_type, tourist_id, incident_id)
+                except ValueError:
+                    await websocket.send_json({"type": "error", "detail": "Invalid thread for call"})
+                    continue
+                active_calls[call_id] = {
+                    "caller_ws": websocket,
+                    "callee_ws": None,
+                    "thread_type": thread_type,
+                    "tourist_id": tourist_id,
+                    "incident_id": incident_id,
+                    "caller_role": caller_role,
+                    "caller_id": caller_id,
+                }
+                await chat_manager.broadcast_to_thread(
+                    thread_type, tourist_id, incident_id,
+                    {"type": "incoming_call", "call_id": call_id, "caller_role": caller_role, "caller_id": caller_id},
+                    exclude_ws=websocket,
+                )
+                await websocket.send_json({"type": "call_started", "call_id": call_id})
+            elif action == "accept_call":
+                call_id = data.get("call_id")
+                if not call_id or call_id not in active_calls:
+                    await websocket.send_json({"type": "error", "detail": "Call not found"})
+                    continue
+                call = active_calls[call_id]
+                call["callee_ws"] = websocket
+                try:
+                    await call["caller_ws"].send_json({"type": "call_accepted", "call_id": call_id})
+                except Exception:
+                    pass
+                await websocket.send_json({"type": "call_accepted", "call_id": call_id})
+            elif action == "reject_call":
+                call_id = data.get("call_id")
+                if call_id and call_id in active_calls:
+                    call = active_calls.pop(call_id)
+                    try:
+                        await call["caller_ws"].send_json({"type": "call_rejected", "call_id": call_id})
+                    except Exception:
+                        pass
+                await websocket.send_json({"type": "call_rejected", "call_id": call_id})
+            elif action == "signaling":
+                call_id = data.get("call_id")
+                payload_s = data.get("payload")
+                if not call_id or call_id not in active_calls or not payload_s:
+                    await websocket.send_json({"type": "error", "detail": "Invalid signaling"})
+                    continue
+                call = active_calls[call_id]
+                other = call["callee_ws"] if call["caller_ws"] == websocket else call["caller_ws"]
+                if other:
+                    try:
+                        await other.send_json({"type": "signaling", "call_id": call_id, "payload": payload_s})
+                    except Exception:
+                        pass
+            elif action == "end_call":
+                call_id = data.get("call_id")
+                if call_id and call_id in active_calls:
+                    call = active_calls.pop(call_id)
+                    for w in (call["caller_ws"], call.get("callee_ws")):
+                        if w and w != websocket:
+                            try:
+                                await w.send_json({"type": "call_ended", "call_id": call_id})
+                            except Exception:
+                                pass
+            elif action == "send":
+                # Allow sending via WebSocket too; same validation as POST
+                payload = data.get("payload") or {}
+                msg_in = MessageSendIn(
+                    thread_type=payload.get("thread_type", ""),
+                    tourist_id=payload.get("tourist_id"),
+                    incident_id=payload.get("incident_id"),
+                    sender_role=payload.get("sender_role", ""),
+                    sender_id=payload.get("sender_id"),
+                    body=payload.get("body", ""),
+                )
+                # Reuse POST logic via a sync call (we're in async context)
+                from fastapi.responses import JSONResponse
+                db = SessionLocal()
+                try:
+                    if msg_in.thread_type == "tourist_authority" and msg_in.tourist_id:
+                        t = db.get(Tourist, msg_in.tourist_id)
+                        if not t:
+                            await websocket.send_json({"type": "error", "detail": "Tourist not found"})
+                            continue
+                        incident_id, tourist_id = None, msg_in.tourist_id
+                    elif msg_in.thread_type == "authority_responder" and msg_in.incident_id is not None:
+                        inc = db.get(Incident, msg_in.incident_id)
+                        if not inc or (inc.ticket_status or "").upper() != "ASSIGNED":
+                            await websocket.send_json({"type": "error", "detail": "Incident not found or not ASSIGNED"})
+                            continue
+                        tourist_id, incident_id = None, msg_in.incident_id
+                    else:
+                        await websocket.send_json({"type": "error", "detail": "Invalid thread"})
+                        continue
+                    msg = Message(
+                        thread_type=msg_in.thread_type,
+                        tourist_id=tourist_id,
+                        incident_id=incident_id,
+                        sender_role=msg_in.sender_role,
+                        sender_id=msg_in.sender_id,
+                        body=msg_in.body.strip() or "(empty)",
+                    )
+                    db.add(msg)
+                    db.commit()
+                    db.refresh(msg)
+                    out = {
+                        "id": msg.id,
+                        "thread_type": msg.thread_type,
+                        "tourist_id": msg.tourist_id,
+                        "incident_id": msg.incident_id,
+                        "sender_role": msg.sender_role,
+                        "sender_id": msg.sender_id,
+                        "body": msg.body,
+                        "created_at": to_ist(msg.created_at),
+                    }
+                    await chat_manager.broadcast_to_thread(msg_in.thread_type, tourist_id, incident_id, {"type": "new_message", "message": out})
+                    await websocket.send_json({"type": "sent", "message": out})
+                finally:
+                    db.close()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        chat_manager.disconnect(websocket)
+        for call_id, call in list(active_calls.items()):
+            if call.get("caller_ws") == websocket or call.get("callee_ws") == websocket:
+                active_calls.pop(call_id, None)
+                other = call.get("callee_ws") if call.get("caller_ws") == websocket else call.get("caller_ws")
+                if other:
+                    try:
+                        await other.send_json({"type": "call_ended", "call_id": call_id})
+                    except Exception:
+                        pass
+
+
+# ---------------- Navigation routing proxy (OSRM/Valhalla) ----------------
+
+def _parse_latlng_pair(s: str):
+    """Parse a 'lat,lng' string into floats."""
+    try:
+        parts = [p.strip() for p in str(s).split(",")]
+        if len(parts) != 2:
+            raise ValueError("expected lat,lng")
+        lat = float(parts[0])
+        lng = float(parts[1])
+        return lat, lng
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid coordinate format. Use 'lat,lng'.")
+
+
+def _osrm_profile(profile: str) -> str:
+    p = (profile or "").strip().lower()
+    if p in ("car", "drive", "driving"):
+        return "driving"
+    if p in ("foot", "walk", "walking"):
+        return "walking"
+    if p in ("bike", "bicycle", "cycling"):
+        return "cycling"
+    raise HTTPException(status_code=400, detail="profile must be one of: car|foot|bike")
+
+
+def _osrm_instruction(step: dict) -> str:
+    """Minimal instruction generator from an OSRM step."""
+    man = step.get("maneuver") or {}
+    typ = (man.get("type") or "").replace("_", " ").strip()
+    mod = (man.get("modifier") or "").replace("_", " ").strip()
+    name = (step.get("name") or "").strip()
+
+    parts = []
+    if typ:
+        parts.append(typ)
+    if mod:
+        parts.append(mod)
+    if name:
+        parts.append(f"onto {name}")
+    return " ".join(parts).strip() or "Continue"
+
+
+# ---------------- Geocoding proxy (Nominatim) ----------------
+
+_GEOCODE_CACHE: Dict[str, Dict[str, Any]] = {}
+_GEOCODE_TTL_SECONDS = 600
+
+
+@app.get("/api/geocode")
+def geocode(q: str, limit: int = 5):
+    """
+    Hackathon-friendly geocoding endpoint.
+
+    - Proxies to OpenStreetMap Nominatim with an explicit User-Agent.
+    - Returns a compact response: [{ display_name, lat, lng }]
+    """
+    query = (q or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="q is required")
+
+    limit_n = max(1, min(int(limit or 5), 10))
+    key = f"{query.lower()}|{limit_n}"
+
+    now = time.time()
+    cached = _GEOCODE_CACHE.get(key)
+    if cached and (now - float(cached.get("ts", 0))) <= _GEOCODE_TTL_SECONDS:
+        return cached.get("value", [])
+
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {
+        "q": query,
+        "format": "json",
+        "addressdetails": 0,
+        "limit": str(limit_n),
+    }
+    headers = {
+        # Nominatim requires a valid User-Agent per usage policy.
+        "User-Agent": "GuardianID/0.1 (hackathon geocoder; contact: demo@localhost)",
+        "Accept": "application/json",
+    }
+
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Geocoding failed: {e}")
+
+    out = []
+    for item in (data or []):
+        try:
+            out.append(
+                {
+                    "display_name": item.get("display_name") or "-",
+                    "lat": float(item.get("lat")),
+                    "lng": float(item.get("lon")),
+                }
+            )
+        except Exception:
+            continue
+
+    _GEOCODE_CACHE[key] = {"ts": now, "value": out}
+    return out
+
+
+@app.get("/api/route")
+def route(profile: str = "foot", from_: str = Query("-", alias="from"), to: str = "-", engine: str = "osrm"):
+    """
+    Routing proxy for the frontend.
+
+    Query params:
+    - profile: car|foot|bike
+    - from: 'lat,lng'
+    - to: 'lat,lng'
+    - engine: osrm|valhalla (default: osrm)
+    """
+    eng = (engine or os.getenv("ROUTING_ENGINE", "osrm")).strip().lower()
+    lat1, lng1 = _parse_latlng_pair(from_)
+    lat2, lng2 = _parse_latlng_pair(to)
+
+    if eng == "valhalla":
+        base = os.getenv("VALHALLA_BASE_URL", "").rstrip("/")
+        if not base:
+            raise HTTPException(status_code=500, detail="VALHALLA_BASE_URL is not configured")
+        costing = "pedestrian" if profile.lower() in ("foot", "walk", "walking") else "auto"
+        payload = {
+            "locations": [{"lat": lat1, "lon": lng1}, {"lat": lat2, "lon": lng2}],
+            "costing": costing,
+            "directions_options": {"units": "kilometers"},
+        }
+        try:
+            r = requests.post(f"{base}/route", json=payload, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Valhalla routing failed: {e}")
+        return {"engine": "valhalla", "raw": data, "from": {"lat": lat1, "lng": lng1}, "to": {"lat": lat2, "lng": lng2}}
+
+    if eng != "osrm":
+        raise HTTPException(status_code=400, detail="engine must be one of: osrm|valhalla")
+
+    base = os.getenv("OSRM_BASE_URL", "https://router.project-osrm.org").rstrip("/")
+    prof = _osrm_profile(profile)
+    path = (
+        f"/route/v1/{prof}/"
+        f"{lng1:.6f},{lat1:.6f};{lng2:.6f},{lat2:.6f}"
+        f"?overview=full&geometries=geojson&steps=true"
+    )
+    url = f"{base}{path}"
+    try:
+        r = requests.get(url, timeout=10, headers={"User-Agent": "GuardianID/0.1 (hackathon)"})
+        r.raise_for_status()
+        data = r.json()
+    except requests.exceptions.SSLError as e:
+        # Hackathon-friendly fallback: if HTTPS handshake fails, retry via HTTP.
+        # This commonly happens on some networks / older system SSL stacks.
+        if base.startswith("https://"):
+            http_base = "http://" + base[len("https://") :]
+            try:
+                r = requests.get(f"{http_base}{path}", timeout=10, headers={"User-Agent": "GuardianID/0.1 (hackathon)"})
+                r.raise_for_status()
+                data = r.json()
+            except Exception as e2:
+                raise HTTPException(status_code=502, detail=f"OSRM routing failed: {e2}")
+        else:
+            raise HTTPException(status_code=502, detail=f"OSRM routing failed: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"OSRM routing failed: {e}")
+
+    if data.get("code") != "Ok":
+        raise HTTPException(status_code=502, detail=f"OSRM error: {data.get('message') or data.get('code')}")
+
+    route0 = (data.get("routes") or [None])[0] or {}
+    leg0 = ((route0.get("legs") or [None])[0]) or {}
+    geom = route0.get("geometry") or {}
+
+    coords = geom.get("coordinates") or []
+    line = {"type": "LineString", "coordinates": coords}
+
+    steps_out = []
+    for st in (leg0.get("steps") or []):
+        man = st.get("maneuver") or {}
+        loc = man.get("location")
+        steps_out.append(
+            {
+                "instruction": _osrm_instruction(st),
+                "distance_m": float(st.get("distance") or 0.0),
+                "duration_s": float(st.get("duration") or 0.0),
+                "maneuverLatLng": {"lat": float(loc[1]), "lng": float(loc[0])} if loc else None,
+            }
+        )
+
+    return {
+        "engine": "osrm",
+        "profile": prof,
+        "from": {"lat": lat1, "lng": lng1},
+        "to": {"lat": lat2, "lng": lng2},
+        "line": line,
+        "steps": steps_out,
+        "distance_m": float(route0.get("distance") or 0.0),
+        "duration_s": float(route0.get("duration") or 0.0),
+    }
 
 
 @app.get("/")

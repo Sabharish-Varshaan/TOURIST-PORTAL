@@ -8,7 +8,6 @@ import "leaflet-draw"
 
 interface AdminMapProps {
   zones: any[]
-<<<<<<< HEAD
   onPolygonDrawn?: (polygon: L.Polygon) => void
 }
 
@@ -21,18 +20,11 @@ export default function AdminMap({ zones, onPolygonDrawn }: AdminMapProps) {
   useEffect(() => {
     callbackRef.current = onPolygonDrawn
   }, [onPolygonDrawn])
-=======
-}
-
-export default function AdminMap({ zones }: AdminMapProps) {
-  const mapRef = useRef<L.Map | null>(null)
-  const drawnItemsRef = useRef<L.FeatureGroup | null>(null)
->>>>>>> bbc8bab (Initial commit)
 
   useEffect(() => {
     if (!mapRef.current) {
       const map = L.map("admin-map").setView([26.1725, 91.744], 13)
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
       }).addTo(map)
 
@@ -54,7 +46,6 @@ export default function AdminMap({ zones }: AdminMapProps) {
       })
       map.addControl(drawControl)
 
-<<<<<<< HEAD
       // ✅ EVENT HANDLER - Listen for both created and edited
       map.on("draw:created", function(e: any) {
         console.log("draw:created event fired") // Debug log
@@ -77,9 +68,6 @@ export default function AdminMap({ zones }: AdminMapProps) {
           }
         })
       })
-
-=======
->>>>>>> bbc8bab (Initial commit)
       mapRef.current = map
     }
 

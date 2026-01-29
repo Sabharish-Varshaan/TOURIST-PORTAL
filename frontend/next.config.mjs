@@ -6,7 +6,6 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-<<<<<<< HEAD
   webpack: (config) => {
     config.externals = [...(config.externals || []), { canvas: 'canvas' }]
     return config
@@ -24,8 +23,6 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ['@radix-ui/react-*'],
   },
-=======
->>>>>>> bbc8bab (Initial commit)
 }
 
 export default nextConfig

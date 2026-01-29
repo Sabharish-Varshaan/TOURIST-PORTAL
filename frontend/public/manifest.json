@@ -1,0 +1,16 @@
+{
+  "name": "GuardianID",
+  "short_name": "GuardianID",
+  "start_url": "/tourist",
+  "display": "standalone",
+  "background_color": "#0b1220",
+  "theme_color": "#0b1220",
+  "icons": [
+    {
+      "src": "/placeholder-logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
+
