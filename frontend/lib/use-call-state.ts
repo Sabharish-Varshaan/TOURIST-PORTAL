@@ -41,18 +41,34 @@ export function useCallState(
   }, [])
 
   const startCall = useCallback(() => {
-    if (!thread) return
+    if (!thread) {
+      console.log("📞 startCall: No thread available")
+      return
+    }
     const call_id = `call-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    console.log("📞 startCall:", { call_id, thread_type: thread.thread_type, callerRole, callerId })
     setCallStatus("calling")
-    sendCallAction({
+    
+    const payload: any = {
       action: "start_call",
       call_id,
       thread_type: thread.thread_type,
-      tourist_id: thread.thread_type === "tourist_authority" ? thread.tourist_id : undefined,
-      incident_id: thread.thread_type === "authority_responder" ? thread.incident_id : undefined,
       caller_role: callerRole,
       caller_id: callerId,
-    })
+    }
+    
+    // Add thread-specific parameters
+    if (thread.thread_type === "tourist_authority" && "tourist_id" in thread) {
+      payload.tourist_id = thread.tourist_id
+    } else if (thread.thread_type === "authority_responder" && "incident_id" in thread) {
+      payload.incident_id = thread.incident_id
+    } else if (thread.thread_type === "responder_tourist" && "tourist_id" in thread && "incident_id" in thread) {
+      payload.tourist_id = thread.tourist_id
+      payload.incident_id = thread.incident_id
+    }
+    
+    console.log("📞 Sending call action:", payload)
+    sendCallAction(payload)
   }, [thread, sendCallAction, callerRole, callerId])
 
   const acceptCall = useCallback(

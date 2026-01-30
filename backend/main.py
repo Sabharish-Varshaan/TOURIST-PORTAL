@@ -1083,6 +1083,61 @@ def get_safety_score(tourist_id: str):
     finally:
         db.close()
 
+@app.get("/api/tourist/{tourist_id}/assigned-incident")
+def get_assigned_incident(tourist_id: str):
+    """Get the assigned SOS incident for a tourist (responder info if available)."""
+    db = SessionLocal()
+    try:
+        t = db.get(Tourist, tourist_id)
+        if not t:
+            raise HTTPException(status_code=404, detail="Tourist not found")
+        
+        # Find the most recent SOS incident that is ASSIGNED
+        incident = db.query(Incident).filter(
+            Incident.tourist_id == tourist_id,
+            Incident.event_type == "sos",
+            Incident.ticket_status == "ASSIGNED"
+        ).order_by(Incident.timestamp.desc()).first()
+        
+        if not incident:
+            return {"has_assigned_incident": False, "incident_id": None, "responder_info": None}
+        
+        # Parse the responder info from ticket_assignee (format: "Name (ID)")
+        responder_info = None
+        if incident.ticket_assignee:
+            # Extract responder_id from "Name (ID)"
+            match = re.search(r'\(([^)]+)\)$', incident.ticket_assignee)
+            if match:
+                responder_id = match.group(1)
+                # Try to find in police substations first
+                substation = next((s for s in POLICE_SUBSTATIONS if s["id"] == responder_id), None)
+                if substation:
+                    # It's a police substation
+                    responder_info = {
+                        "responder_id": responder_id,
+                        "responder_name": incident.ticket_assignee.split(" (")[0],  # Extract name part
+                        "substation_id": responder_id,
+                        "substation_name": substation["name"],
+                        "assignee_label": incident.ticket_assignee
+                    }
+                else:
+                    # It's a responder ID (not a substation), just return the assignee label
+                    responder_info = {
+                        "responder_id": responder_id,
+                        "responder_name": incident.ticket_assignee.split(" (")[0],  # Extract name part
+                        "substation_id": None,
+                        "substation_name": "Responder",
+                        "assignee_label": incident.ticket_assignee
+                    }
+        
+        return {
+            "has_assigned_incident": True,
+            "incident_id": incident.id,
+            "responder_info": responder_info
+        }
+    finally:
+        db.close()
+
 # In main.py
 # REPLACE your existing logs() function with this one
 
@@ -1138,6 +1193,8 @@ class ConnectionManager:
             return ("tourist_authority", tourist_id)
         if thread_type == "authority_responder" and incident_id is not None:
             return ("authority_responder", incident_id)
+        if thread_type == "responder_tourist" and tourist_id and incident_id is not None:
+            return ("responder_tourist", tourist_id, incident_id)
         raise ValueError("invalid thread")
 
     async def subscribe(self, websocket: WebSocket, thread_type: str, tourist_id: Optional[str] = None, incident_id: Optional[int] = None):
@@ -1193,8 +1250,19 @@ async def send_message(payload: MessageSendIn):
                 raise HTTPException(status_code=400, detail="Incident not found or not ASSIGNED")
             tourist_id = None
             incident_id = payload.incident_id
+        elif payload.thread_type == "responder_tourist":
+            if not payload.tourist_id or payload.incident_id is None:
+                raise HTTPException(status_code=400, detail="tourist_id and incident_id required for responder_tourist")
+            t = db.get(Tourist, payload.tourist_id)
+            if not t:
+                raise HTTPException(status_code=404, detail="Tourist not found")
+            inc = db.get(Incident, payload.incident_id)
+            if not inc or (inc.ticket_status or "").upper() != "ASSIGNED" or inc.tourist_id != payload.tourist_id:
+                raise HTTPException(status_code=400, detail="Incident not found, not ASSIGNED, or wrong tourist")
+            tourist_id = payload.tourist_id
+            incident_id = payload.incident_id
         else:
-            raise HTTPException(status_code=400, detail="thread_type must be tourist_authority or authority_responder")
+            raise HTTPException(status_code=400, detail="thread_type must be tourist_authority, authority_responder, or responder_tourist")
 
         msg = Message(
             thread_type=payload.thread_type,
@@ -1237,14 +1305,16 @@ def list_messages(
         tid, iid = tourist_id, None
     elif thread_type == "authority_responder" and incident_id is not None:
         tid, iid = None, incident_id
+    elif thread_type == "responder_tourist" and tourist_id and incident_id is not None:
+        tid, iid = tourist_id, incident_id
     else:
-        raise HTTPException(status_code=400, detail="Provide tourist_id for tourist_authority or incident_id for authority_responder")
+        raise HTTPException(status_code=400, detail="Provide tourist_id for tourist_authority, incident_id for authority_responder, or both for responder_tourist")
     db = SessionLocal()
     try:
         q = db.query(Message).filter(Message.thread_type == thread_type)
         if tid is not None:
             q = q.filter(Message.tourist_id == tid)
-        else:
+        if iid is not None:
             q = q.filter(Message.incident_id == iid)
         rows = q.order_by(Message.created_at.desc()).limit(limit).all()
         out = []

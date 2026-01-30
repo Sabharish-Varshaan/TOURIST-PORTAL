@@ -71,9 +71,16 @@ export default function ChatPanel({
               variant={callProps.callStatus === "in_call" ? "destructive" : "outline"}
               disabled={!connected || callProps.callStatus === "calling"}
               onClick={() => {
+                console.log("📞 Call button clicked!", { 
+                  callStatus: callProps.callStatus, 
+                  activeCallId: callProps.activeCallId,
+                  connected 
+                })
                 if (callProps.callStatus === "in_call" && callProps.activeCallId) {
+                  console.log("📞 Ending call:", callProps.activeCallId)
                   callProps.onEndCall(callProps.activeCallId)
                 } else {
+                  console.log("📞 Starting new call...")
                   callProps.onStartCall()
                 }
               }}

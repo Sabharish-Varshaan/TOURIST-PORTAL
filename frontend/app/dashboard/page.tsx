@@ -7,6 +7,7 @@ import TouristLookup from "@/components/dashboard/tourist-lookup"
 import IncidentFeed from "@/components/dashboard/incident-feed"
 import QuickStats from "@/components/dashboard/quick-stats"
 import RecentIncidents from "@/components/dashboard/recent-incidents"
+import DashboardDualChat from "@/components/dashboard/dashboard-dual-chat"
 
 const DashboardMap = dynamic(() => import("@/components/dashboard/map"), { ssr: false })
 
@@ -49,6 +50,7 @@ export default function DashboardPage() {
 
       <div className="space-y-6">
         <DashboardMap tourists={tourists} logs={logs} />
+        <DashboardDualChat tourists={tourists} />
         <IncidentFeed logs={logs} onRefresh={() => setRefreshTrigger((prev) => prev + 1)} />
       </div>
     </div>

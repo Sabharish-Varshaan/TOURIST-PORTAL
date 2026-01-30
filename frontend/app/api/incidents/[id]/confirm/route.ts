@@ -1,8 +1,9 @@
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const backendUrl = process.env.BACKEND_URL || "http://localhost:8000"
+  const { id } = await params
 
   try {
-    const response = await fetch(`${backendUrl}/api/incidents/${params.id}/confirm`, {
+    const response = await fetch(`${backendUrl}/api/incidents/${id}/confirm`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
     })

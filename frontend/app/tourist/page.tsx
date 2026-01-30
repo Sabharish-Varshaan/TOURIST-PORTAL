@@ -7,7 +7,7 @@ import TouristMap from "@/components/tourist/map-wrapper"
 import EKYCForm from "@/components/tourist/ekyc-form"
 import QRCard from "@/components/tourist/qr-card-simple"  // ← USE THE NEW FILE
 import TouristChatbot from "@/components/tourist/chatbot"
-import TouristChat from "@/components/chat/tourist-chat"
+import TouristDualChat from "@/components/chat/tourist-dual-chat"
 import OfflineIndicator from "@/components/offline-indicator"
 import DemoChecklist from "@/components/demo-checklist"
 
@@ -51,12 +51,17 @@ export default function TouristPage() {
               <div className="mt-4 flex justify-center">
                 <OfflineIndicator />
               </div>
+              <div className="mt-2 text-xs text-gray-400">ID: {touristId?.slice(-8)} (full: {touristId})</div>
             </div>
 
             <QRCard touristId={touristId!} qrCode={qrCode!} />
             <TouristMap touristId={touristId!} />
             <EKYCForm touristId={touristId!} />
-            <TouristChat touristId={touristId!} />
+            
+            {/* Dual Chat: Authority + Responder with tab switcher */}
+            {touristId && <TouristDualChat touristId={touristId} />}
+            
+            {/* AI Chatbot */}
             <TouristChatbot touristId={touristId!} />
             <DemoChecklist />
 

@@ -22,9 +22,11 @@ export type ChatMessage = {
 export type ChatThread =
   | { thread_type: "tourist_authority"; tourist_id: string }
   | { thread_type: "authority_responder"; incident_id: number }
+  | { thread_type: "responder_tourist"; tourist_id: string; incident_id: number }
 
 export type ChatOptions = {
   onCallMessage?: (data: Record<string, unknown>) => void
+  onWebRTCSignal?: (callId: string, signal: any) => void
 }
 
 export function useChat(thread: ChatThread | null, options?: ChatOptions) {
@@ -32,7 +34,9 @@ export function useChat(thread: ChatThread | null, options?: ChatOptions) {
   const [connected, setConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const onCallMessageRef = useRef(options?.onCallMessage)
+  const onWebRTCSignalRef = useRef(options?.onWebRTCSignal)
   onCallMessageRef.current = options?.onCallMessage
+  onWebRTCSignalRef.current = options?.onWebRTCSignal
 
   const apiBase = typeof window !== "undefined" ? (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000") : ""
 
@@ -40,8 +44,17 @@ export function useChat(thread: ChatThread | null, options?: ChatOptions) {
     if (!thread || !apiBase) return
     try {
       const params = new URLSearchParams({ thread_type: thread.thread_type })
-      if (thread.thread_type === "tourist_authority") params.set("tourist_id", thread.tourist_id)
-      else params.set("incident_id", String(thread.incident_id))
+      
+      // Explicitly handle each thread type
+      if (thread.thread_type === "tourist_authority" && "tourist_id" in thread) {
+        params.set("tourist_id", thread.tourist_id)
+      } else if (thread.thread_type === "authority_responder" && "incident_id" in thread) {
+        params.set("incident_id", String(thread.incident_id))
+      } else if (thread.thread_type === "responder_tourist" && "tourist_id" in thread && "incident_id" in thread) {
+        params.set("tourist_id", thread.tourist_id)
+        params.set("incident_id", String(thread.incident_id))
+      }
+      
       const res = await fetch(`${apiBase}/api/messages?${params}`)
       const data = await res.json()
       setMessages(Array.isArray(data.messages) ? data.messages : [])
@@ -66,12 +79,21 @@ export function useChat(thread: ChatThread | null, options?: ChatOptions) {
 
     ws.onopen = () => {
       setConnected(true)
-      ws.send(JSON.stringify({
+      const subscribePayload: any = {
         action: "subscribe",
         thread_type: thread.thread_type,
-        tourist_id: thread.thread_type === "tourist_authority" ? thread.tourist_id : undefined,
-        incident_id: thread.thread_type === "authority_responder" ? thread.incident_id : undefined,
-      }))
+      }
+      
+      // Explicitly handle each thread type
+      if (thread.thread_type === "tourist_authority" && "tourist_id" in thread) {
+        subscribePayload.tourist_id = thread.tourist_id
+      } else if (thread.thread_type === "authority_responder" && "incident_id" in thread) {
+        subscribePayload.incident_id = thread.incident_id
+      } else if (thread.thread_type === "responder_tourist" && "tourist_id" in thread && "incident_id" in thread) {
+        subscribePayload.tourist_id = thread.tourist_id
+        subscribePayload.incident_id = thread.incident_id
+      }
+      ws.send(JSON.stringify(subscribePayload))
     }
 
     ws.onmessage = (event) => {
@@ -83,6 +105,9 @@ export function useChat(thread: ChatThread | null, options?: ChatOptions) {
             if (prev.some((m) => m.id === msg.id)) return prev
             return [...prev, msg]
           })
+        } else if (data.type === "signaling" && data.call_id && data.payload) {
+          // Forward WebRTC signaling to handler
+          onWebRTCSignalRef.current?.(data.call_id as string, data.payload)
         } else {
           onCallMessageRef.current?.(data as Record<string, unknown>)
         }
@@ -105,17 +130,37 @@ export function useChat(thread: ChatThread | null, options?: ChatOptions) {
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload))
   }, [])
 
+  const sendWebRTCSignal = useCallback((callId: string, signal: any) => {
+    const ws = wsRef.current
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        action: "signaling",
+        call_id: callId,
+        payload: signal,
+      }))
+    }
+  }, [])
+
   const sendMessage = useCallback(
     async (body: string, senderRole: string, senderId?: string) => {
       if (!thread || !body.trim()) return
-      const payload = {
+      const payload: any = {
         thread_type: thread.thread_type,
-        tourist_id: thread.thread_type === "tourist_authority" ? thread.tourist_id : undefined,
-        incident_id: thread.thread_type === "authority_responder" ? thread.incident_id : undefined,
         sender_role: senderRole,
         sender_id: senderId ?? null,
         body: body.trim(),
       }
+      
+      // Explicitly handle each thread type
+      if (thread.thread_type === "tourist_authority" && "tourist_id" in thread) {
+        payload.tourist_id = thread.tourist_id
+      } else if (thread.thread_type === "authority_responder" && "incident_id" in thread) {
+        payload.incident_id = thread.incident_id
+      } else if (thread.thread_type === "responder_tourist" && "tourist_id" in thread && "incident_id" in thread) {
+        payload.tourist_id = thread.tourist_id
+        payload.incident_id = thread.incident_id
+      }
+      
       try {
         const res = await fetch(`${apiBase}/api/messages`, {
           method: "POST",
@@ -132,5 +177,5 @@ export function useChat(thread: ChatThread | null, options?: ChatOptions) {
     [thread, apiBase]
   )
 
-  return { messages, connected, sendMessage, sendCallAction, loadMessages }
+  return { messages, connected, sendMessage, sendCallAction, sendWebRTCSignal, loadMessages }
 }

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useRef } from "react"
 import { useChat } from "@/lib/chat"
 import { useCallState } from "@/lib/use-call-state"
 import ChatPanel from "@/components/chat/chat-panel"
+import ResponderTouristChat from "@/components/chat/responder-tourist-chat"
 import ResponderMap, { type ResponderTicket } from "@/components/responder/map-wrapper"
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
@@ -32,23 +33,35 @@ export default function ResponderPage() {
   const [routeMeta, setRouteMeta] = useState<{ distance_m?: number; duration_s?: number } | null>(null)
   const [status, setStatus] = useState<string>("")
   const [loading, setLoading] = useState(false)
+  const [mounted, setMounted] = useState(false)
 
+  // Load from localStorage on mount (client-side only)
   useEffect(() => {
+    setMounted(true)
     try {
-      setMyName(localStorage.getItem("guardianid:responder:name") || "")
-      setMyId(localStorage.getItem("guardianid:responder:id") || "")
-      const a = localStorage.getItem("guardianid:responder:available")
-      if (a) setAvailable(a === "true")
-    } catch {}
+      const storedName = localStorage.getItem("guardianid:responder:name")
+      const storedId = localStorage.getItem("guardianid:responder:id")
+      const storedAvailable = localStorage.getItem("guardianid:responder:available")
+      
+      if (storedName) setMyName(storedName)
+      if (storedId) setMyId(storedId)
+      if (storedAvailable) setAvailable(storedAvailable === "true")
+    } catch (err) {
+      console.error("Failed to load responder data from localStorage:", err)
+    }
   }, [])
 
+  // Save to localStorage whenever values change (but only after mount)
   useEffect(() => {
+    if (!mounted) return
     try {
-      localStorage.setItem("guardianid:responder:name", myName)
-      localStorage.setItem("guardianid:responder:id", myId)
+      if (myName) localStorage.setItem("guardianid:responder:name", myName)
+      if (myId) localStorage.setItem("guardianid:responder:id", myId)
       localStorage.setItem("guardianid:responder:available", String(available))
-    } catch {}
-  }, [myName, myId, available])
+    } catch (err) {
+      console.error("Failed to save responder data to localStorage:", err)
+    }
+  }, [myName, myId, available, mounted])
 
   const fetchLogs = async () => {
     try {
@@ -88,7 +101,11 @@ export default function ResponderPage() {
 
   const activeMine = useMemo<ResponderTicket | null>(() => {
     const mineKey = myId ? `(${myId})` : ""
-    if (!mineKey) return null
+    console.log("🔍 Calculating activeMine:", { myId, mineKey, logsCount: logs.length })
+    if (!mineKey) {
+      console.log("🔍 No mineKey, returning null")
+      return null
+    }
     const found = logs.find(
       (l) =>
         (l.event_type || "").toLowerCase() === "sos" &&
@@ -97,7 +114,12 @@ export default function ResponderPage() {
         l.lat !== "-" &&
         l.lng !== "-",
     )
-    if (!found) return null
+    if (!found) {
+      console.log("🔍 No matching ASSIGNED ticket found for", mineKey)
+      console.log("🔍 All ASSIGNED tickets:", logs.filter(l => l.ticket_status === "ASSIGNED"))
+      return null
+    }
+    console.log("🔍 Found activeMine:", { id: found.id, tourist_id: found.tourist_id, assignee: found.ticket_assignee })
     return {
       id: Number(found.id),
       tourist_id: String(found.tourist_id || "-"),
@@ -310,6 +332,13 @@ export default function ResponderPage() {
           </div>
 
           {status ? <div className="mt-3 text-sm text-gray-700">{status}</div> : null}
+          
+          {/* DEBUG INFO - only show after mount to avoid hydration mismatch */}
+          {mounted && (
+            <div className="mt-3 text-xs text-gray-500 space-y-1">
+              <div>myId: "{myId}" | activeMine: {activeMine ? `SOS #${activeMine.id}` : "null"} | chatThread: {chatThread ? "yes" : "no"}</div>
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6">
@@ -363,6 +392,26 @@ export default function ResponderPage() {
                     />
                   </div>
                 )}
+                
+                {/* Tourist Chat - Always show when ticket is assigned */}
+                {mounted && activeMine && myId ? (
+                  <div className="mt-4">
+                    <ResponderTouristChat
+                      touristId={activeMine.tourist_id}
+                      incidentId={activeMine.id}
+                      responderId={myId}
+                    />
+                  </div>
+                ) : mounted && !activeMine ? (
+                  <div className="mt-4 p-4 bg-yellow-50 rounded-2xl border border-yellow-200">
+                    <div className="text-sm font-semibold text-yellow-800 mb-1">
+                      💬 Tourist Chat Unavailable
+                    </div>
+                    <div className="text-xs text-yellow-700">
+                      {!myId ? "Please set your Responder ID above to enable chat." : "Accept a ticket to chat with the tourist."}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 

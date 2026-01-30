@@ -51,6 +51,7 @@ export default function IncidentFeed({ logs, onRefresh }: IncidentFeedProps) {
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState<Filter>("all")
   const [chatIncidentId, setChatIncidentId] = useState<number | null>(null)
+  const [mounted, setMounted] = useState(false)
   const chatThread =
     chatIncidentId !== null
       ? { thread_type: "authority_responder" as const, incident_id: chatIncidentId }
@@ -66,6 +67,10 @@ export default function IncidentFeed({ logs, onRefresh }: IncidentFeedProps) {
   useEffect(() => {
     callMessageRef.current = callState.handleMessage
   }, [callState.handleMessage])
+  
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const handleAssignClick = async (incidentId: number) => {
     setLoading(true)
@@ -209,7 +214,7 @@ export default function IncidentFeed({ logs, onRefresh }: IncidentFeedProps) {
                 Live incident feed
               </CardTitle>
               <div className="text-xs text-slate-600 mt-1 flex items-center gap-2">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-slate-500 animate-pulse shadow-sm"></span>
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-slate-500 animate-pulse shadow-sm" suppressHydrationWarning></span>
                 Latest first • confirm SOS before dispatch
               </div>
             </div>

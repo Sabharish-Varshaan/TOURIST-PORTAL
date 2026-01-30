@@ -1,21 +1,23 @@
 "use client"
 
-import { useRef, useEffect } from "react"
+import { useRef, useEffect, useState } from "react"
 import { useChat } from "@/lib/chat"
 import { useCallState } from "@/lib/use-call-state"
 import ChatPanel from "./chat-panel"
 import CallDialog from "./call-dialog"
-import { useState } from "react"
 
-interface TouristChatProps {
+interface AuthorityTouristChatProps {
   touristId: string
 }
 
-export default function TouristChat({ touristId }: TouristChatProps) {
+export default function AuthorityTouristChat({ touristId }: AuthorityTouristChatProps) {
   const [activeWebRTCCallId, setActiveWebRTCCallId] = useState<string | null>(null)
   const [isCallInitiator, setIsCallInitiator] = useState(false)
   
-  const thread = { thread_type: "tourist_authority" as const, tourist_id: touristId }
+  const thread = touristId 
+    ? { thread_type: "tourist_authority" as const, tourist_id: touristId }
+    : null
+  
   const callMessageRef = useRef<(data: Record<string, unknown>) => void>(() => {})
   
   const { messages, connected, sendMessage, sendCallAction, sendWebRTCSignal } = useChat(thread, {
@@ -25,7 +27,7 @@ export default function TouristChat({ touristId }: TouristChatProps) {
     },
   })
   
-  const callState = useCallState(thread, sendCallAction, { callerRole: "tourist", callerId: touristId })
+  const callState = useCallState(thread, sendCallAction, { callerRole: "authority", callerId: "authority" })
   
   useEffect(() => {
     const enhancedHandler = (data: Record<string, unknown>) => {
@@ -33,17 +35,17 @@ export default function TouristChat({ touristId }: TouristChatProps) {
       
       // Handle WebRTC call lifecycle
       if (data.type === "incoming_call") {
-        console.log("📞 TouristChat: Incoming call from authority", data.call_id)
+        console.log("📞 AuthorityTouristChat: Incoming call from tourist", data.call_id)
         setActiveWebRTCCallId(data.call_id as string)
         setIsCallInitiator(false)
       } else if (data.type === "call_started") {
-        console.log("📞 TouristChat: Call started", data.call_id)
+        console.log("📞 AuthorityTouristChat: Call started", data.call_id)
         setActiveWebRTCCallId(data.call_id as string)
         setIsCallInitiator(true)
       } else if (data.type === "call_accepted") {
-        console.log("📞 TouristChat: Call accepted", data.call_id)
+        console.log("📞 AuthorityTouristChat: Call accepted", data.call_id)
       } else if (data.type === "call_ended" || data.type === "call_rejected") {
-        console.log("📞 TouristChat: Call ended/rejected", data.call_id)
+        console.log("📞 AuthorityTouristChat: Call ended/rejected", data.call_id)
         setActiveWebRTCCallId(null)
         setIsCallInitiator(false)
       }
@@ -51,31 +53,36 @@ export default function TouristChat({ touristId }: TouristChatProps) {
     callMessageRef.current = enhancedHandler
   }, [callState.handleMessage])
 
+  if (!touristId) {
+    return (
+      <div className="bg-white rounded-3xl shadow-xl p-6 border border-gray-100">
+        <div className="text-gray-600">
+          <p className="font-semibold mb-2">Chat with Tourist</p>
+          <p className="text-sm text-gray-500">Select a tourist to start chatting</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
-      <div className="bg-white rounded-3xl shadow-xl p-6 border border-gray-100">
-        <div className="mb-3">
-          <h3 className="text-sm font-bold text-gray-900 mb-1">💬 Authority Communication</h3>
-          <p className="text-xs text-gray-600">Chat directly with authorities for help and updates</p>
-        </div>
-        <ChatPanel
-          title="Chat with Authority"
-          messages={messages}
-          connected={connected}
-          onSend={(body) => sendMessage(body, "tourist", touristId)}
-          senderRole="tourist"
-          senderId={touristId}
-          callProps={{
-            callStatus: callState.callStatus,
-            activeCallId: callState.activeCallId,
-            incomingCall: callState.incomingCall,
-            onStartCall: callState.startCall,
-            onAcceptCall: callState.acceptCall,
-            onRejectCall: callState.rejectCall,
-            onEndCall: callState.endCall,
-          }}
-        />
-      </div>
+      <ChatPanel
+        title={`Chat with Tourist ${touristId.slice(-8)}`}
+        messages={messages}
+        connected={connected}
+        onSend={(body) => sendMessage(body, "authority", "authority")}
+        senderRole="authority"
+        senderId="authority"
+        callProps={{
+          callStatus: callState.callStatus,
+          activeCallId: callState.activeCallId,
+          incomingCall: callState.incomingCall,
+          onStartCall: callState.startCall,
+          onAcceptCall: callState.acceptCall,
+          onRejectCall: callState.rejectCall,
+          onEndCall: callState.endCall,
+        }}
+      />
       <CallDialog
         callId={activeWebRTCCallId}
         isInitiator={isCallInitiator}
