@@ -13,6 +13,7 @@ export type ChatMessage = {
   thread_type: string
   tourist_id: string | null
   incident_id: number | null
+  room_id: string | null
   sender_role: string
   sender_id: string | null
   body: string
@@ -23,6 +24,7 @@ export type ChatThread =
   | { thread_type: "tourist_authority"; tourist_id: string }
   | { thread_type: "authority_responder"; incident_id: number }
   | { thread_type: "responder_tourist"; tourist_id: string; incident_id: number }
+  | { thread_type: "group_room"; room_id: string; tourist_id: string }
 
 export type ChatOptions = {
   onCallMessage?: (data: Record<string, unknown>) => void
@@ -53,6 +55,8 @@ export function useChat(thread: ChatThread | null, options?: ChatOptions) {
       } else if (thread.thread_type === "responder_tourist" && "tourist_id" in thread && "incident_id" in thread) {
         params.set("tourist_id", thread.tourist_id)
         params.set("incident_id", String(thread.incident_id))
+      } else if (thread.thread_type === "group_room" && "room_id" in thread) {
+        params.set("room_id", thread.room_id)
       }
       
       const res = await fetch(`${apiBase}/api/messages?${params}`)
@@ -69,7 +73,12 @@ export function useChat(thread: ChatThread | null, options?: ChatOptions) {
       return
     }
     loadMessages()
-  }, [thread?.thread_type, thread && "tourist_id" in thread ? thread.tourist_id : null, thread && "incident_id" in thread ? thread.incident_id : null])
+  }, [
+    thread?.thread_type,
+    thread && "tourist_id" in thread ? thread.tourist_id : null,
+    thread && "incident_id" in thread ? thread.incident_id : null,
+    thread && "room_id" in thread ? thread.room_id : null,
+  ])
 
   useEffect(() => {
     if (!thread) return
@@ -92,6 +101,8 @@ export function useChat(thread: ChatThread | null, options?: ChatOptions) {
       } else if (thread.thread_type === "responder_tourist" && "tourist_id" in thread && "incident_id" in thread) {
         subscribePayload.tourist_id = thread.tourist_id
         subscribePayload.incident_id = thread.incident_id
+      } else if (thread.thread_type === "group_room" && "room_id" in thread) {
+        subscribePayload.room_id = thread.room_id
       }
       ws.send(JSON.stringify(subscribePayload))
     }
@@ -123,7 +134,12 @@ export function useChat(thread: ChatThread | null, options?: ChatOptions) {
       ws.close()
       wsRef.current = null
     }
-  }, [thread?.thread_type, thread && "tourist_id" in thread ? thread.tourist_id : null, thread && "incident_id" in thread ? thread.incident_id : null])
+  }, [
+    thread?.thread_type,
+    thread && "tourist_id" in thread ? thread.tourist_id : null,
+    thread && "incident_id" in thread ? thread.incident_id : null,
+    thread && "room_id" in thread ? thread.room_id : null,
+  ])
 
   const sendCallAction = useCallback((payload: Record<string, unknown>) => {
     const ws = wsRef.current
@@ -159,6 +175,9 @@ export function useChat(thread: ChatThread | null, options?: ChatOptions) {
       } else if (thread.thread_type === "responder_tourist" && "tourist_id" in thread && "incident_id" in thread) {
         payload.tourist_id = thread.tourist_id
         payload.incident_id = thread.incident_id
+      } else if (thread.thread_type === "group_room" && "room_id" in thread) {
+        payload.room_id = thread.room_id
+        payload.tourist_id = thread.tourist_id
       }
       
       try {

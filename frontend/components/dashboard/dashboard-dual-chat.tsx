@@ -190,15 +190,16 @@ export default function DashboardDualChat({ tourists }: DashboardDualChatProps) 
           </CardTitle>
         </CardHeader>
         <CardContent className="pt-4">
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "tourist" | "responder")}>
-            <TabsList className="grid w-full grid-cols-2 mb-4">
-              <TabsTrigger value="tourist" className="flex items-center gap-2">
-                <Users className="w-4 h-4" />
-                Tourist Chat
-              </TabsTrigger>
-              <TabsTrigger value="responder" className="flex items-center gap-2">
-                <Siren className="w-4 h-4" />
-                Responder Chat
+          <div className="dashboard-hub-tabs [&_[data-slot=tabs-list]]:grid [&_[data-slot=tabs-list]]:w-full [&_[data-slot=tabs-list]]:grid-cols-2 [&_[data-slot=tabs-list]]:mb-4 [&_[data-slot=tabs-list]]:bg-slate-100 [&_[data-slot=tabs-list]]:border [&_[data-slot=tabs-list]]:border-slate-200 [&_[data-slot=tabs-trigger]]:flex [&_[data-slot=tabs-trigger]]:items-center [&_[data-slot=tabs-trigger]]:gap-2 [&_[data-slot=tabs-trigger][data-state=active]]:!bg-white [&_[data-slot=tabs-trigger][data-state=active]]:!text-slate-900 [&_[data-slot=tabs-trigger][data-state=active]]:shadow-sm [&_[data-slot=tabs-trigger]]:!text-slate-700">
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "tourist" | "responder")}>
+              <TabsList>
+                <TabsTrigger value="tourist">
+                  <Users className="w-4 h-4" />
+                  Tourist Chat
+                </TabsTrigger>
+                <TabsTrigger value="responder">
+                  <Siren className="w-4 h-4" />
+                  Responder Chat
                 {incidents.length > 0 && (
                   <Badge variant="destructive" className="ml-1 px-1.5 py-0 text-[10px]">
                     {incidents.length}
@@ -300,7 +301,7 @@ export default function DashboardDualChat({ tourists }: DashboardDualChatProps) 
                           setIncidentSearchQuery(String(inc.id))
                           setSelectedIncident(inc)
                         }}
-                        className="text-xs"
+                        className="text-xs border-slate-400 bg-white text-slate-800 hover:bg-slate-100 hover:text-slate-900"
                       >
                         #{inc.id} - {inc.tourist_id?.slice(-8)}
                       </Button>
@@ -354,7 +355,8 @@ export default function DashboardDualChat({ tourists }: DashboardDualChatProps) 
                 </div>
               )}
             </TabsContent>
-          </Tabs>
+            </Tabs>
+          </div>
         </CardContent>
       </Card>
 

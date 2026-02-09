@@ -1,11 +1,7 @@
 import type React from "react"
 import type { Metadata } from "next"
-import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
 import AppBootstrap from "@/components/app-bootstrap"
-
-const geistSans = Geist({ subsets: ["latin"] })
-const geistMono = Geist_Mono({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
   title: "GuardianID",
@@ -21,7 +17,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${geistSans.className} antialiased`}>
+      <body className="font-sans antialiased">
         <AppBootstrap />
         {children}
       </body>

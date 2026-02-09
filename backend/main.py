@@ -5,14 +5,21 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any, Union
 from datetime import datetime,timedelta
 from uuid import uuid4
+from pathlib import Path
 import base64, io, hashlib, re, json as pyjson
 import os
 import time
 import requests
 
-from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, ForeignKey, Float, text as sql_text
+from dotenv import load_dotenv
+
+# Load .env from backend directory (works regardless of cwd when starting the server)
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
+from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, ForeignKey, Float, Boolean, UniqueConstraint, text as sql_text
 
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
+from sqlalchemy.exc import IntegrityError
 
 from contextlib import asynccontextmanager
 from chatbot_api import chatbot_router
@@ -87,7 +94,29 @@ class Tourist(Base):
     last_lat = Column(String, default="-")
     last_lng = Column(String, default="-")
 
+    # auth: hashed password (nullable for existing rows)
+    password_hash = Column(String, nullable=True)
+
     incidents = relationship("Incident", back_populates="tourist")
+
+class Room(Base):
+    __tablename__ = "rooms"
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    created_by = Column(String, ForeignKey("tourists.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    qr_png_b64 = Column(Text)
+    is_active = Column(Boolean, default=True)
+
+class RoomMember(Base):
+    __tablename__ = "room_members"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    room_id = Column(String, ForeignKey("rooms.id"))
+    tourist_id = Column(String, ForeignKey("tourists.id"))
+    role = Column(String, default="member")  # member | admin
+    joined_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("room_id", "tourist_id", name="uix_room_member"),)
 
 # In main.py
 class Incident(Base):
@@ -125,9 +154,10 @@ class Zone(Base):
 class Message(Base):
     __tablename__ = "messages"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    thread_type = Column(String, nullable=False)     # tourist_authority | authority_responder
+    thread_type = Column(String, nullable=False)     # tourist_authority | authority_responder | group_room
     tourist_id = Column(String, ForeignKey("tourists.id"), nullable=True)
     incident_id = Column(Integer, ForeignKey("incidents.id"), nullable=True)
+    room_id = Column(String, ForeignKey("rooms.id"), nullable=True)
     sender_role = Column(String, nullable=False)     # tourist | authority | responder
     sender_id = Column(String, nullable=True)       # tourist_id or responder id for display
     body = Column(Text, nullable=False)
@@ -138,9 +168,9 @@ Base.metadata.create_all(engine)
 # --- simple migration (adds columns if missing) ---
 with engine.connect() as con:
     cols = [row[1] for row in con.execute(sql_text("PRAGMA table_info('tourists')")).fetchall()]
-    for needed in [("last_lat","TEXT"), ("last_lng","TEXT")]:
+    for needed in [("last_lat","TEXT"), ("last_lng","TEXT"), ("password_hash","TEXT")]:
         if needed[0] not in cols:
-            con.execute(sql_text(f"ALTER TABLE tourists ADD COLUMN {needed[0]} {needed[1]} DEFAULT '-'"))
+            con.execute(sql_text(f"ALTER TABLE tourists ADD COLUMN {needed[0]} {needed[1]} DEFAULT NULL"))
 
     # ticket lifecycle timestamps (safe add if missing)
     inc_cols = [row[1] for row in con.execute(sql_text("PRAGMA table_info('incidents')")).fetchall()]
@@ -154,19 +184,48 @@ with engine.connect() as con:
 
     # messages table for two-way chat
     try:
+        # rooms + members for group travel
+        con.execute(sql_text(
+            "CREATE TABLE IF NOT EXISTS rooms ("
+            "id TEXT PRIMARY KEY, "
+            "name TEXT NOT NULL, "
+            "description TEXT, "
+            "created_by TEXT, "
+            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+            "qr_png_b64 TEXT, "
+            "is_active INTEGER DEFAULT 1, "
+            "FOREIGN KEY (created_by) REFERENCES tourists(id))"
+        ))
+        con.execute(sql_text(
+            "CREATE TABLE IF NOT EXISTS room_members ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "room_id TEXT, "
+            "tourist_id TEXT, "
+            "role TEXT DEFAULT 'member', "
+            "joined_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+            "FOREIGN KEY (room_id) REFERENCES rooms(id), "
+            "FOREIGN KEY (tourist_id) REFERENCES tourists(id), "
+            "UNIQUE (room_id, tourist_id))"
+        ))
+
         con.execute(sql_text(
             "CREATE TABLE IF NOT EXISTS messages ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "thread_type TEXT NOT NULL, "
             "tourist_id TEXT, "
             "incident_id INTEGER, "
+            "room_id TEXT, "
             "sender_role TEXT NOT NULL, "
             "sender_id TEXT, "
             "body TEXT NOT NULL, "
             "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
             "FOREIGN KEY (tourist_id) REFERENCES tourists(id), "
-            "FOREIGN KEY (incident_id) REFERENCES incidents(id))"
+            "FOREIGN KEY (incident_id) REFERENCES incidents(id), "
+            "FOREIGN KEY (room_id) REFERENCES rooms(id))"
         ))
+        msg_cols = [row[1] for row in con.execute(sql_text("PRAGMA table_info('messages')")).fetchall()]
+        if "room_id" not in msg_cols:
+            con.execute(sql_text("ALTER TABLE messages ADD COLUMN room_id TEXT"))
         con.commit()
     except Exception:
         pass
@@ -252,10 +311,13 @@ class RegisterIn(BaseModel):
     name: str
     phone: str
     emergency_contact: str
+    password: str
+    confirm_password: str
 
 class RegisterOut(BaseModel):
     tourist_id: str
     qr_png_base64: str
+    name: Optional[str] = None
 
 class CheckIn(BaseModel):
     tourist_id: str
@@ -289,14 +351,50 @@ class ZoneIn(BaseModel):
 
 
 class MessageSendIn(BaseModel):
-    thread_type: str  # tourist_authority | authority_responder
+    thread_type: str  # tourist_authority | authority_responder | group_room
     tourist_id: Optional[str] = None
     incident_id: Optional[int] = None
+    room_id: Optional[str] = None
     sender_role: str  # tourist | authority | responder
     sender_id: Optional[str] = None
     body: str
 
+class RoomCreateIn(BaseModel):
+    name: str
+    description: Optional[str] = None
+    created_by: str
+
+class RoomJoinIn(BaseModel):
+    room_id: str
+    tourist_id: str
+
+class RoomJoinQRIn(BaseModel):
+    qr_payload: str
+    tourist_id: str
+
+
+class LoginIn(BaseModel):
+    phone: str
+    password: str
+
+
 # ---------------- Helpers ----------------
+def normalize_phone(s: str) -> str:
+    """Normalize phone for lookup: strip and remove spaces, dashes, parens."""
+    return re.sub(r"[\s\-\(\)]", "", (s or "").strip())
+
+
+def hash_password(password: str) -> str:
+    salt = os.environ.get("GUARDIANID_PASSWORD_SALT", "guardianid-default-salt")
+    return hashlib.sha256((password + salt).encode("utf-8")).hexdigest()
+
+
+def verify_password(password: str, stored_hash: Optional[str]) -> bool:
+    if not stored_hash:
+        return False
+    return hash_password(password) == stored_hash
+
+
 def make_qr_base64(payload_text: str) -> str:
     import qrcode
     from PIL import Image
@@ -307,6 +405,18 @@ def make_qr_base64(payload_text: str) -> str:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+def generate_room_id() -> str:
+    return uuid4().hex[:8]
+
+def parse_room_qr_payload(payload: str) -> Optional[str]:
+    if not payload:
+        return None
+    payload = payload.strip()
+    if payload.startswith("room:"):
+        room_id = payload.split("room:", 1)[1].strip()
+        return room_id or None
+    return None
 
 def make_incident_hash(*parts: str) -> str:
     raw = "|".join(parts)
@@ -683,16 +793,146 @@ def anomalies_scan(inactivity_minutes: int = DEFAULT_INACTIVITY_MINUTES):
 # ---------------- Routes ----------------
 @app.post("/api/register", response_model=RegisterOut)
 def register_user(payload: RegisterIn):
+    if payload.password != payload.confirm_password:
+        raise HTTPException(status_code=400, detail="Password and confirm password do not match")
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    phone_norm = normalize_phone(payload.phone)
+    if not phone_norm:
+        raise HTTPException(status_code=400, detail="Phone number is required")
     db = SessionLocal()
     try:
+        existing = db.query(Tourist).filter(Tourist.phone == phone_norm).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="This contact number is already registered")
         tid = str(uuid4())
         qr_b64 = make_qr_base64(tid)
+        pw_hash = hash_password(payload.password)
         t = Tourist(
-            id=tid, name=payload.name.strip(), phone=payload.phone.strip(),
-            emergency_contact=payload.emergency_contact.strip(), qr_png_b64=qr_b64,
+            id=tid,
+            name=payload.name.strip(),
+            phone=phone_norm,
+            emergency_contact=payload.emergency_contact.strip(),
+            qr_png_b64=qr_b64,
+            password_hash=pw_hash,
         )
-        db.add(t); db.commit()
-        return RegisterOut(tourist_id=tid, qr_png_base64=qr_b64)
+        db.add(t)
+        db.commit()
+        return RegisterOut(tourist_id=tid, qr_png_base64=qr_b64, name=t.name)
+    finally:
+        db.close()
+
+@app.post("/api/rooms")
+def create_room(payload: RoomCreateIn):
+    db = SessionLocal()
+    try:
+        creator = db.get(Tourist, payload.created_by)
+        if not creator:
+            raise HTTPException(404, "Tourist not found")
+        room_id = generate_room_id()
+        for _ in range(3):
+            if not db.get(Room, room_id):
+                break
+            room_id = generate_room_id()
+        if db.get(Room, room_id):
+            raise HTTPException(500, "Room ID generation failed")
+        qr_b64 = make_qr_base64(f"room:{room_id}")
+        room = Room(
+            id=room_id,
+            name=payload.name.strip(),
+            description=(payload.description or "").strip() or None,
+            created_by=payload.created_by,
+            qr_png_b64=qr_b64,
+            is_active=True,
+        )
+        db.add(room)
+        db.add(RoomMember(room_id=room_id, tourist_id=payload.created_by, role="admin"))
+        db.commit()
+        return {
+            "room_id": room.id,
+            "name": room.name,
+            "description": room.description,
+            "created_by": room.created_by,
+            "qr_png_base64": room.qr_png_b64,
+            "is_active": room.is_active,
+        }
+    finally:
+        db.close()
+
+@app.get("/api/rooms/{room_id}")
+def get_room(room_id: str):
+    db = SessionLocal()
+    try:
+        room = db.get(Room, room_id)
+        if not room:
+            raise HTTPException(404, "Room not found")
+        return {
+            "room_id": room.id,
+            "name": room.name,
+            "description": room.description,
+            "created_by": room.created_by,
+            "qr_png_base64": room.qr_png_b64,
+            "is_active": room.is_active,
+        }
+    finally:
+        db.close()
+
+@app.post("/api/rooms/{room_id}/join")
+def join_room(room_id: str, payload: RoomJoinIn):
+    db = SessionLocal()
+    try:
+        if room_id != payload.room_id:
+            raise HTTPException(400, "room_id mismatch")
+        room = db.get(Room, room_id)
+        if not room or not room.is_active:
+            raise HTTPException(404, "Room not found")
+        tourist = db.get(Tourist, payload.tourist_id)
+        if not tourist:
+            raise HTTPException(404, "Tourist not found")
+        member = db.query(RoomMember).filter(
+            RoomMember.room_id == room_id,
+            RoomMember.tourist_id == payload.tourist_id,
+        ).first()
+        if member:
+            return {"ok": True, "room_id": room_id, "already_member": True}
+        db.add(RoomMember(room_id=room_id, tourist_id=payload.tourist_id, role="member"))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            return {"ok": True, "room_id": room_id, "already_member": True}
+        return {"ok": True, "room_id": room_id, "already_member": False}
+    finally:
+        db.close()
+
+@app.post("/api/rooms/join-by-qr")
+def join_room_by_qr(payload: RoomJoinQRIn):
+    room_id = parse_room_qr_payload(payload.qr_payload)
+    if not room_id:
+        raise HTTPException(400, "Invalid QR payload")
+    return join_room(room_id, RoomJoinIn(room_id=room_id, tourist_id=payload.tourist_id))
+
+@app.get("/api/rooms/{room_id}/members")
+def list_room_members(room_id: str):
+    db = SessionLocal()
+    try:
+        room = db.get(Room, room_id)
+        if not room:
+            raise HTTPException(404, "Room not found")
+        members = db.query(RoomMember, Tourist).join(
+            Tourist, Tourist.id == RoomMember.tourist_id
+        ).filter(RoomMember.room_id == room_id).all()
+        out = []
+        for m, t in members:
+            out.append({
+                "tourist_id": t.id,
+                "name": t.name,
+                "role": m.role,
+                "joined_at": to_ist(m.joined_at),
+                "last_lat": t.last_lat,
+                "last_lng": t.last_lng,
+            })
+        return {"room_id": room_id, "members": out}
     finally:
         db.close()
 
@@ -1070,7 +1310,61 @@ def tourists():
     finally:
         db.close()
 
-# In main.py, add this new endpoint
+
+@app.post("/api/tourist/login")
+def tourist_login(payload: LoginIn):
+    """Login with contact number and password. Returns profile with qr_png_base64 for session restore."""
+    phone_norm = normalize_phone(payload.phone or "")
+    if not phone_norm:
+        raise HTTPException(status_code=400, detail="Contact number is required")
+    if not (payload.password or "").strip():
+        raise HTTPException(status_code=400, detail="Password is required")
+    db = SessionLocal()
+    try:
+        t = db.query(Tourist).filter(Tourist.phone == phone_norm).first()
+        if not t:
+            t = next((x for x in db.query(Tourist).all() if normalize_phone(x.phone) == phone_norm), None)
+        if not t:
+            raise HTTPException(status_code=404, detail="No account found with this contact number")
+        if not t.password_hash:
+            raise HTTPException(
+                status_code=401,
+                detail="This account has no password. Please register again with this contact number to set a password.",
+            )
+        if not verify_password(payload.password, t.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid password")
+        return {
+            "ok": True,
+            "tourist_id": t.id,
+            "name": t.name,
+            "qr_png_base64": t.qr_png_b64 or "",
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/tourist/{tourist_id}/profile")
+def tourist_profile(tourist_id: str):
+    """Get tourist profile by ID (for session restore / validation)."""
+    db = SessionLocal()
+    try:
+        t = db.get(Tourist, tourist_id)
+        if not t:
+            raise HTTPException(status_code=404, detail="Tourist not found")
+        return {
+            "id": t.id,
+            "name": t.name,
+            "qr_png_base64": t.qr_png_b64 or "",
+        }
+    finally:
+        db.close()
+
+
+@app.post("/api/tourist/logout")
+def tourist_logout():
+    """Acknowledge logout (session is client-side; backend has no session store)."""
+    return {"ok": True}
+
 
 @app.get("/api/tourist/{tourist_id}/safety-score")
 def get_safety_score(tourist_id: str):
@@ -1186,28 +1480,30 @@ def logs():
 class ConnectionManager:
     """In-memory WebSocket subscriber registry for chat broadcast."""
     def __init__(self):
-        self.connections: list = []  # list of (WebSocket, set of (thread_type, tourist_id or incident_id))
+        self.connections: list = []  # list of (WebSocket, set of (thread_type, tourist_id/incident_id/room_id))
 
-    def _thread_key(self, thread_type: str, tourist_id: Optional[str], incident_id: Optional[int]) -> tuple:
+    def _thread_key(self, thread_type: str, tourist_id: Optional[str], incident_id: Optional[int], room_id: Optional[str] = None) -> tuple:
         if thread_type == "tourist_authority" and tourist_id:
             return ("tourist_authority", tourist_id)
         if thread_type == "authority_responder" and incident_id is not None:
             return ("authority_responder", incident_id)
         if thread_type == "responder_tourist" and tourist_id and incident_id is not None:
             return ("responder_tourist", tourist_id, incident_id)
+        if thread_type == "group_room" and room_id:
+            return ("group_room", room_id)
         raise ValueError("invalid thread")
 
-    async def subscribe(self, websocket: WebSocket, thread_type: str, tourist_id: Optional[str] = None, incident_id: Optional[int] = None):
-        key = self._thread_key(thread_type, tourist_id, incident_id)
+    async def subscribe(self, websocket: WebSocket, thread_type: str, tourist_id: Optional[str] = None, incident_id: Optional[int] = None, room_id: Optional[str] = None):
+        key = self._thread_key(thread_type, tourist_id, incident_id, room_id)
         for ws, threads in self.connections:
             if ws == websocket:
                 threads.add(key)
                 return
         self.connections.append((websocket, {key}))
 
-    async def broadcast_to_thread(self, thread_type: str, tourist_id: Optional[str], incident_id: Optional[int], payload: dict, exclude_ws: Optional[WebSocket] = None):
+    async def broadcast_to_thread(self, thread_type: str, tourist_id: Optional[str], incident_id: Optional[int], room_id: Optional[str], payload: dict, exclude_ws: Optional[WebSocket] = None):
         try:
-            key = self._thread_key(thread_type, tourist_id, incident_id)
+            key = self._thread_key(thread_type, tourist_id, incident_id, room_id)
         except ValueError:
             return
         to_remove = []
@@ -1242,6 +1538,7 @@ async def send_message(payload: MessageSendIn):
                 raise HTTPException(status_code=404, detail="Tourist not found")
             incident_id = None
             tourist_id = payload.tourist_id
+            room_id = None
         elif payload.thread_type == "authority_responder":
             if payload.incident_id is None:
                 raise HTTPException(status_code=400, detail="incident_id required for authority_responder")
@@ -1250,6 +1547,7 @@ async def send_message(payload: MessageSendIn):
                 raise HTTPException(status_code=400, detail="Incident not found or not ASSIGNED")
             tourist_id = None
             incident_id = payload.incident_id
+            room_id = None
         elif payload.thread_type == "responder_tourist":
             if not payload.tourist_id or payload.incident_id is None:
                 raise HTTPException(status_code=400, detail="tourist_id and incident_id required for responder_tourist")
@@ -1261,13 +1559,30 @@ async def send_message(payload: MessageSendIn):
                 raise HTTPException(status_code=400, detail="Incident not found, not ASSIGNED, or wrong tourist")
             tourist_id = payload.tourist_id
             incident_id = payload.incident_id
+            room_id = None
+        elif payload.thread_type == "group_room":
+            if not payload.room_id or not payload.tourist_id:
+                raise HTTPException(status_code=400, detail="room_id and tourist_id required for group_room")
+            room = db.get(Room, payload.room_id)
+            if not room or not room.is_active:
+                raise HTTPException(status_code=404, detail="Room not found")
+            member = db.query(RoomMember).filter(
+                RoomMember.room_id == payload.room_id,
+                RoomMember.tourist_id == payload.tourist_id,
+            ).first()
+            if not member:
+                raise HTTPException(status_code=403, detail="Tourist is not a room member")
+            tourist_id = payload.tourist_id
+            incident_id = None
+            room_id = payload.room_id
         else:
-            raise HTTPException(status_code=400, detail="thread_type must be tourist_authority, authority_responder, or responder_tourist")
+            raise HTTPException(status_code=400, detail="thread_type must be tourist_authority, authority_responder, responder_tourist, or group_room")
 
         msg = Message(
             thread_type=payload.thread_type,
             tourist_id=tourist_id,
             incident_id=incident_id,
+            room_id=room_id,
             sender_role=payload.sender_role,
             sender_id=payload.sender_id,
             body=payload.body.strip() or "(empty)",
@@ -1280,13 +1595,14 @@ async def send_message(payload: MessageSendIn):
             "thread_type": msg.thread_type,
             "tourist_id": msg.tourist_id,
             "incident_id": msg.incident_id,
+            "room_id": msg.room_id,
             "sender_role": msg.sender_role,
             "sender_id": msg.sender_id,
             "body": msg.body,
             "created_at": to_ist(msg.created_at),
         }
         await chat_manager.broadcast_to_thread(
-            payload.thread_type, tourist_id, incident_id,
+            payload.thread_type, tourist_id, incident_id, room_id,
             {"type": "new_message", "message": out},
         )
         return out
@@ -1299,16 +1615,19 @@ def list_messages(
     thread_type: str = Query(...),
     tourist_id: Optional[str] = Query(None),
     incident_id: Optional[int] = Query(None),
+    room_id: Optional[str] = Query(None),
     limit: int = Query(100, le=500),
 ):
     if thread_type == "tourist_authority" and tourist_id:
-        tid, iid = tourist_id, None
+        tid, iid, rid = tourist_id, None, None
     elif thread_type == "authority_responder" and incident_id is not None:
-        tid, iid = None, incident_id
+        tid, iid, rid = None, incident_id, None
     elif thread_type == "responder_tourist" and tourist_id and incident_id is not None:
-        tid, iid = tourist_id, incident_id
+        tid, iid, rid = tourist_id, incident_id, None
+    elif thread_type == "group_room" and room_id:
+        tid, iid, rid = None, None, room_id
     else:
-        raise HTTPException(status_code=400, detail="Provide tourist_id for tourist_authority, incident_id for authority_responder, or both for responder_tourist")
+        raise HTTPException(status_code=400, detail="Provide tourist_id for tourist_authority, incident_id for authority_responder, both for responder_tourist, or room_id for group_room")
     db = SessionLocal()
     try:
         q = db.query(Message).filter(Message.thread_type == thread_type)
@@ -1316,6 +1635,8 @@ def list_messages(
             q = q.filter(Message.tourist_id == tid)
         if iid is not None:
             q = q.filter(Message.incident_id == iid)
+        if rid is not None:
+            q = q.filter(Message.room_id == rid)
         rows = q.order_by(Message.created_at.desc()).limit(limit).all()
         out = []
         for m in reversed(rows):
@@ -1324,6 +1645,7 @@ def list_messages(
                 "thread_type": m.thread_type,
                 "tourist_id": m.tourist_id,
                 "incident_id": m.incident_id,
+                "room_id": m.room_id,
                 "sender_role": m.sender_role,
                 "sender_id": m.sender_id,
                 "body": m.body,
@@ -1345,18 +1667,23 @@ async def websocket_chat(websocket: WebSocket):
                 thread_type = data.get("thread_type")
                 tourist_id = data.get("tourist_id")
                 incident_id = data.get("incident_id")
-                if thread_type and (tourist_id or incident_id is not None):
-                    await chat_manager.subscribe(websocket, thread_type, tourist_id, incident_id)
-                await websocket.send_json({"type": "subscribed", "thread_type": thread_type, "tourist_id": tourist_id, "incident_id": incident_id})
+                room_id = data.get("room_id")
+                if thread_type and (room_id or tourist_id or incident_id is not None):
+                    await chat_manager.subscribe(websocket, thread_type, tourist_id, incident_id, room_id)
+                await websocket.send_json({"type": "subscribed", "thread_type": thread_type, "tourist_id": tourist_id, "incident_id": incident_id, "room_id": room_id})
             elif action == "start_call":
                 call_id = data.get("call_id") or str(uuid4())
                 thread_type = data.get("thread_type")
                 tourist_id = data.get("tourist_id")
                 incident_id = data.get("incident_id")
+                room_id = data.get("room_id")
                 caller_role = data.get("caller_role", "")
                 caller_id = data.get("caller_id", "")
+                if thread_type == "group_room":
+                    await websocket.send_json({"type": "error", "detail": "Group room calls are not supported"})
+                    continue
                 try:
-                    key = chat_manager._thread_key(thread_type, tourist_id, incident_id)
+                    key = chat_manager._thread_key(thread_type, tourist_id, incident_id, room_id)
                 except ValueError:
                     await websocket.send_json({"type": "error", "detail": "Invalid thread for call"})
                     continue
@@ -1366,11 +1693,12 @@ async def websocket_chat(websocket: WebSocket):
                     "thread_type": thread_type,
                     "tourist_id": tourist_id,
                     "incident_id": incident_id,
+                    "room_id": room_id,
                     "caller_role": caller_role,
                     "caller_id": caller_id,
                 }
                 await chat_manager.broadcast_to_thread(
-                    thread_type, tourist_id, incident_id,
+                    thread_type, tourist_id, incident_id, room_id,
                     {"type": "incoming_call", "call_id": call_id, "caller_role": caller_role, "caller_id": caller_id},
                     exclude_ws=websocket,
                 )
@@ -1426,6 +1754,7 @@ async def websocket_chat(websocket: WebSocket):
                     thread_type=payload.get("thread_type", ""),
                     tourist_id=payload.get("tourist_id"),
                     incident_id=payload.get("incident_id"),
+                    room_id=payload.get("room_id"),
                     sender_role=payload.get("sender_role", ""),
                     sender_id=payload.get("sender_id"),
                     body=payload.get("body", ""),
@@ -1439,13 +1768,33 @@ async def websocket_chat(websocket: WebSocket):
                         if not t:
                             await websocket.send_json({"type": "error", "detail": "Tourist not found"})
                             continue
-                        incident_id, tourist_id = None, msg_in.tourist_id
+                        incident_id, tourist_id, room_id = None, msg_in.tourist_id, None
                     elif msg_in.thread_type == "authority_responder" and msg_in.incident_id is not None:
                         inc = db.get(Incident, msg_in.incident_id)
                         if not inc or (inc.ticket_status or "").upper() != "ASSIGNED":
                             await websocket.send_json({"type": "error", "detail": "Incident not found or not ASSIGNED"})
                             continue
-                        tourist_id, incident_id = None, msg_in.incident_id
+                        tourist_id, incident_id, room_id = None, msg_in.incident_id, None
+                    elif msg_in.thread_type == "responder_tourist" and msg_in.tourist_id and msg_in.incident_id is not None:
+                        t = db.get(Tourist, msg_in.tourist_id)
+                        inc = db.get(Incident, msg_in.incident_id)
+                        if not t or not inc or (inc.ticket_status or "").upper() != "ASSIGNED" or inc.tourist_id != msg_in.tourist_id:
+                            await websocket.send_json({"type": "error", "detail": "Invalid responder_tourist thread"})
+                            continue
+                        tourist_id, incident_id, room_id = msg_in.tourist_id, msg_in.incident_id, None
+                    elif msg_in.thread_type == "group_room" and msg_in.room_id and msg_in.tourist_id:
+                        room = db.get(Room, msg_in.room_id)
+                        if not room or not room.is_active:
+                            await websocket.send_json({"type": "error", "detail": "Room not found"})
+                            continue
+                        member = db.query(RoomMember).filter(
+                            RoomMember.room_id == msg_in.room_id,
+                            RoomMember.tourist_id == msg_in.tourist_id,
+                        ).first()
+                        if not member:
+                            await websocket.send_json({"type": "error", "detail": "Tourist is not a room member"})
+                            continue
+                        tourist_id, incident_id, room_id = msg_in.tourist_id, None, msg_in.room_id
                     else:
                         await websocket.send_json({"type": "error", "detail": "Invalid thread"})
                         continue
@@ -1453,6 +1802,7 @@ async def websocket_chat(websocket: WebSocket):
                         thread_type=msg_in.thread_type,
                         tourist_id=tourist_id,
                         incident_id=incident_id,
+                        room_id=room_id,
                         sender_role=msg_in.sender_role,
                         sender_id=msg_in.sender_id,
                         body=msg_in.body.strip() or "(empty)",
@@ -1465,12 +1815,13 @@ async def websocket_chat(websocket: WebSocket):
                         "thread_type": msg.thread_type,
                         "tourist_id": msg.tourist_id,
                         "incident_id": msg.incident_id,
+                        "room_id": msg.room_id,
                         "sender_role": msg.sender_role,
                         "sender_id": msg.sender_id,
                         "body": msg.body,
                         "created_at": to_ist(msg.created_at),
                     }
-                    await chat_manager.broadcast_to_thread(msg_in.thread_type, tourist_id, incident_id, {"type": "new_message", "message": out})
+                    await chat_manager.broadcast_to_thread(msg_in.thread_type, tourist_id, incident_id, room_id, {"type": "new_message", "message": out})
                     await websocket.send_json({"type": "sent", "message": out})
                 finally:
                     db.close()
@@ -1697,3 +2048,8 @@ def route(profile: str = "foot", from_: str = Query("-", alias="from"), to: str 
 @app.get("/")
 def root():
     return {"status": "ok", "docs": "/docs", "tourist_app": "/static/tourist.html", "dashboard": "/static/dashboard.html", "admin": "/static/admin.html"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

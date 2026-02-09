@@ -69,6 +69,7 @@ export default function ChatPanel({
               type="button"
               size="sm"
               variant={callProps.callStatus === "in_call" ? "destructive" : "outline"}
+              className={callProps.callStatus !== "in_call" ? "border-slate-400 bg-white text-slate-800 hover:bg-slate-100 hover:text-slate-900" : undefined}
               disabled={!connected || callProps.callStatus === "calling"}
               onClick={() => {
                 console.log("📞 Call button clicked!", { 
@@ -125,11 +126,13 @@ export default function ChatPanel({
                 <Button
                   variant="outline"
                   onClick={() => callProps.onRejectCall(callProps.incomingCall!.call_id)}
+                  className="border-slate-400 bg-white text-slate-800 hover:bg-slate-100 hover:text-slate-900"
                 >
                   Reject
                 </Button>
                 <Button
                   onClick={() => callProps.onAcceptCall(callProps.incomingCall!.call_id)}
+                  className="bg-slate-800 text-white hover:bg-slate-700 hover:text-white"
                 >
                   Accept
                 </Button>

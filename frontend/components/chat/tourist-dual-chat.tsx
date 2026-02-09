@@ -32,7 +32,12 @@ export default function TouristDualChat({ touristId }: TouristDualChatProps) {
       try {
         const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
         const res = await fetch(`${api}/api/tourist/${touristId}/assigned-incident`)
-        if (!res.ok) throw new Error("Failed to fetch assigned incident")
+        if (!res.ok) {
+          setIncidentId(null)
+          setResponderInfo(null)
+          setHasAssignedIncident(false)
+          return
+        }
         const data = await res.json()
         
         if (data.has_assigned_incident && data.incident_id && data.responder_info) {
@@ -40,10 +45,13 @@ export default function TouristDualChat({ touristId }: TouristDualChatProps) {
           setResponderInfo(data.responder_info)
           setHasAssignedIncident(true)
         } else {
+          setIncidentId(null)
+          setResponderInfo(null)
           setHasAssignedIncident(false)
         }
       } catch (err) {
-        console.error("TouristDualChat: Error fetching incident:", err)
+        setIncidentId(null)
+        setResponderInfo(null)
         setHasAssignedIncident(false)
       }
     }
@@ -132,8 +140,8 @@ export default function TouristDualChat({ touristId }: TouristDualChatProps) {
 
   return (
     <>
-      <Card className="bg-white rounded-3xl shadow-xl border border-gray-100">
-        <CardContent className="p-6">
+      <Card className="bg-slate-50 rounded-3xl shadow-xl border border-slate-200">
+        <CardContent className="p-6 bg-white/80 rounded-2xl">
           <div className="mb-4">
             <h3 className="text-sm font-bold text-gray-900 mb-1 flex items-center gap-2">
               <MessageSquare className="w-4 h-4" />
@@ -145,12 +153,12 @@ export default function TouristDualChat({ touristId }: TouristDualChatProps) {
           </div>
 
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "authority" | "responder")}>
-            <TabsList className="grid w-full grid-cols-2 mb-4">
-              <TabsTrigger value="authority" className="flex items-center gap-2">
+            <TabsList className="grid w-full grid-cols-2 mb-4 bg-slate-100 border border-slate-200">
+              <TabsTrigger value="authority" className="flex items-center gap-2 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm text-slate-700 border-slate-200">
                 <Shield className="w-4 h-4" />
                 Authority
               </TabsTrigger>
-              <TabsTrigger value="responder" className="flex items-center gap-2" disabled={!hasAssignedIncident}>
+              <TabsTrigger value="responder" className="flex items-center gap-2 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm text-slate-700 border-slate-200" disabled={!hasAssignedIncident}>
                 <Siren className="w-4 h-4" />
                 Responder
                 {hasAssignedIncident && (
@@ -163,6 +171,7 @@ export default function TouristDualChat({ touristId }: TouristDualChatProps) {
 
             <TabsContent value="authority" className="mt-0">
               <ChatPanel
+                className="bg-white border-slate-200"
                 title="Chat with Authority"
                 messages={authorityMessages}
                 connected={authorityConnected}
@@ -198,6 +207,7 @@ export default function TouristDualChat({ touristId }: TouristDualChatProps) {
                     )}
                   </div>
                   <ChatPanel
+                    className="bg-white border-slate-200"
                     title={`Chat with ${responderInfo.name || "Responder"}`}
                     messages={responderMessages}
                     connected={responderConnected}

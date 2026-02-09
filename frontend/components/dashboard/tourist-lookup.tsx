@@ -132,12 +132,13 @@ export default function TouristLookup({ tourists, logs }: TouristLookupProps) {
             </div>
 
             <div className="flex items-center justify-between gap-2">
-              <Button variant="outline" onClick={handleSearch}>
+              <Button variant="outline" onClick={handleSearch} className="border-slate-400 bg-white text-slate-800 hover:bg-slate-100 hover:text-slate-900">
                 Refresh
               </Button>
               <Button
                 variant={showIncidents ? "secondary" : "outline"}
                 onClick={() => setShowIncidents((v) => !v)}
+                className={!showIncidents ? "border-slate-400 bg-white text-slate-800 hover:bg-slate-100 hover:text-slate-900" : undefined}
               >
                 {showIncidents ? "Hide history" : "Show history"}
               </Button>

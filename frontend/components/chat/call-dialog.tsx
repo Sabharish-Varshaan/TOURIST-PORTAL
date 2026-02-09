@@ -145,7 +145,7 @@ export default function CallDialog({
           {/* Controls */}
           <div className="flex justify-center gap-3">
             {!isInitiator && !localStream && (
-              <Button onClick={acceptCall} className="bg-green-600 hover:bg-green-700">
+              <Button onClick={acceptCall} className="bg-green-600 text-white hover:bg-green-700">
                 Accept Call
               </Button>
             )}

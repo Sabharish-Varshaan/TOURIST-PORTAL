@@ -12,6 +12,7 @@ const TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 
 interface TouristMapProps {
   touristId: string
+  roomId?: string | null
 }
 
 function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number) {
@@ -43,12 +44,14 @@ function latLngToTileXY(lat: number, lng: number, z: number) {
   return { x, y }
 }
 
-export default function TouristMap({ touristId }: TouristMapProps) {
+export default function TouristMap({ touristId, roomId }: TouristMapProps) {
   const mapRef = useRef<L.Map | null>(null)
   const [geoMsg, setGeoMsg] = useState("🔄 Initializing geofence monitoring...")
   const [geoStatus, setGeoStatus] = useState<"safe" | "warning" | "danger" | "loading">("loading")
   const [currentPos, setCurrentPos] = useState<NavLatLng | null>(null)
   const userMarkerRef = useRef<L.CircleMarker | null>(null)
+  const roomMarkersRef = useRef<Map<string, L.CircleMarker>>(new Map())
+  const roomPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const zonesRef = useRef<any[]>([])
   const currentZoneRef = useRef<any>(null)
   const enterTimeRef = useRef<number | null>(null)
@@ -88,8 +91,80 @@ export default function TouristMap({ touristId }: TouristMapProps) {
 
     return () => {
       if (dwellTimerRef.current) clearInterval(dwellTimerRef.current)
+      if (roomPollRef.current) clearInterval(roomPollRef.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (!mapRef.current) return
+
+    const clearRoomMarkers = () => {
+      roomMarkersRef.current.forEach((marker) => marker.remove())
+      roomMarkersRef.current.clear()
+    }
+
+    if (!roomId) {
+      clearRoomMarkers()
+      return
+    }
+
+    const updateMarkers = (members: any[]) => {
+      const seen = new Set<string>()
+      members.forEach((m) => {
+        if (!m?.tourist_id || m.tourist_id === touristId) return
+        const lat = Number(m.last_lat)
+        const lng = Number(m.last_lng)
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+        seen.add(m.tourist_id)
+        const existing = roomMarkersRef.current.get(m.tourist_id)
+        if (existing) {
+          existing.setLatLng([lat, lng])
+        } else {
+          const marker = L.circleMarker([lat, lng], {
+            radius: 6,
+            fillColor: "#22c55e",
+            color: "#ffffff",
+            weight: 2,
+            fillOpacity: 0.9,
+          }).addTo(mapRef.current!)
+          const displayName = (m.name && String(m.name).trim()) ? String(m.name).trim() : `Member ${m.tourist_id?.slice(-6) || ""}`
+          marker.bindTooltip(displayName, {
+            permanent: true,
+            direction: "top",
+            className: "room-member-tooltip",
+            offset: [0, -8],
+          })
+          roomMarkersRef.current.set(m.tourist_id, marker)
+        }
+      })
+      Array.from(roomMarkersRef.current.keys()).forEach((id) => {
+        if (!seen.has(id)) {
+          const marker = roomMarkersRef.current.get(id)
+          if (marker) marker.remove()
+          roomMarkersRef.current.delete(id)
+        }
+      })
+    }
+
+    const fetchMembers = async () => {
+      try {
+        const res = await fetch(`${API}/api/rooms/${roomId}/members`)
+        if (!res.ok) return
+        const data = await res.json()
+        updateMarkers(Array.isArray(data.members) ? data.members : [])
+      } catch (err) {
+        console.error("Failed to fetch room members:", err)
+      }
+    }
+
+    fetchMembers()
+    if (roomPollRef.current) clearInterval(roomPollRef.current)
+    roomPollRef.current = setInterval(fetchMembers, 5000)
+    return () => {
+      if (roomPollRef.current) clearInterval(roomPollRef.current)
+      clearRoomMarkers()
+    }
+  }, [roomId, touristId])
 
   const fetchZones = async () => {
     try {

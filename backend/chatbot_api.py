@@ -5,21 +5,30 @@ import uuid
 import asyncio
 import json
 import requests
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Depends, APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from urllib.parse import urlencode, quote_plus
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 
-load_dotenv()  # load .env
+# Load .env from backend directory - use dotenv_values for direct file read (avoids cwd issues)
+_env_path = Path(__file__).resolve().parent / ".env"
+_env_vars = dotenv_values(_env_path) if _env_path.exists() else {}
+if _env_vars:
+    for k, v in _env_vars.items():
+        if v is not None:
+            os.environ[k] = v
+else:
+    load_dotenv(_env_path, override=True)
 
 # ------------------ Configuration ------------------
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")  # Groq API key
-OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")  # required for weather
+GROQ_API_KEY = (_env_vars.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY") or "").strip()
+OPENWEATHER_API_KEY = (_env_vars.get("OPENWEATHER_API_KEY") or os.getenv("OPENWEATHER_API_KEY") or "").strip()
 
 chatbot_router = APIRouter()
 
@@ -1311,6 +1320,10 @@ async def chat_endpoint(chat_request: ChatMessage):
         suggestions=suggestions
     )
 
-print("HAS_OWM=", bool(OPENWEATHER_API_KEY),
-      "HAS_GROQ=", bool(GROQ_API_KEY))
+print(
+    "HAS_OWM=", bool(OPENWEATHER_API_KEY),
+    "HAS_GROQ=", bool(GROQ_API_KEY),
+    "| .env:", "found" if _env_path.exists() else "NOT FOUND",
+    "| keys loaded:", len(_env_vars)
+)
 

@@ -5,28 +5,42 @@ import { useState } from "react"
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
 interface TouristRegistrationProps {
-  onRegister: (id: string, qr: string) => void
+  onRegister: (id: string, qr: string, name?: string) => void
 }
+
+const MIN_PASSWORD_LENGTH = 6
 
 export default function TouristRegistration({ onRegister }: TouristRegistrationProps) {
   const [name, setName] = useState("")
   const [phone, setPhone] = useState("")
   const [emergency, setEmergency] = useState("")
+  const [password, setPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
   const [status, setStatus] = useState("")
   const [loading, setLoading] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
 
   const handleRegister = async () => {
     if (!name.trim() || !phone.trim() || !emergency.trim()) {
-      setStatus("⚠️ Please fill all fields")
+      setStatus("Please fill name, phone and emergency contact")
+      return
+    }
+    if (!password) {
+      setStatus("Please enter a password")
+      return
+    }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setStatus(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`)
+      return
+    }
+    if (password !== confirmPassword) {
+      setStatus("Password and confirm password do not match")
       return
     }
 
     setLoading(true)
     setStatus("")
     try {
-      console.log("📤 Sending registration request to:", `${API}/api/register`)
-      console.log("🌐 API Base URL:", API)
-      
       const res = await fetch(`${API}/api/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -34,60 +48,47 @@ export default function TouristRegistration({ onRegister }: TouristRegistrationP
           name: name.trim(),
           phone: phone.trim(),
           emergency_contact: emergency.trim(),
+          password,
+          confirm_password: confirmPassword,
         }),
       })
 
-      console.log("📨 Response status:", res.status)
+      const data = await res.json().catch(() => ({}))
+      const detail = Array.isArray(data.detail) ? data.detail[0]?.msg ?? data.detail : data.detail
 
       if (!res.ok) {
-        const errorText = await res.text()
-        console.error("🔴 Backend error response:", errorText)
-        throw new Error(`HTTP error! status: ${res.status} - ${errorText}`)
+        if (res.status === 409) {
+          setStatus(detail || "This contact number is already registered.")
+          return
+        }
+        setStatus(detail || `Registration failed (${res.status})`)
+        return
       }
-
-      const data = await res.json()
-      console.log("📦 Full API Response:", data)
-      console.log("🆔 Tourist ID:", data.tourist_id)
-      console.log("🖼️  QR Code exists:", !!data.qr_png_base64)
-      console.log("📏 QR Code length:", data.qr_png_base64?.length || 0)
-      console.log("🔤 QR Code first 50 chars:", data.qr_png_base64?.substring(0, 50) || "EMPTY")
 
       const touristId = data.tourist_id
       const qrCode = data.qr_png_base64
 
       if (!touristId) {
-        console.error("❌ Missing tourist_id in response")
-        setStatus("❌ Registration failed: Missing tourist ID")
+        setStatus("Registration failed: Missing tourist ID")
         return
       }
-
       if (!qrCode) {
-        console.error("❌ Missing qr_png_base64 in response. Full response keys:", Object.keys(data))
-        console.error("❌ Response ", JSON.stringify(data, null, 2))
-        setStatus("❌ Registration failed: Backend didn't return QR code. Check server logs.")
+        setStatus("Registration failed: No QR code returned")
         return
       }
 
-      console.log("✅ Registration successful! Calling onRegister...")
-      onRegister(touristId, qrCode)
-      setStatus("✅ Registered successfully!")
-      
-      // Clear form
+      onRegister(touristId, qrCode, (data as { name?: string }).name)
+      setStatus("Registered successfully!")
       setName("")
       setPhone("")
       setEmergency("")
+      setPassword("")
+      setConfirmPassword("")
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Unknown error'
-      console.error("❌ Registration error:", err)
-      
-      // Provide helpful error messages
-      if (errorMsg.includes("Failed to fetch")) {
-        setStatus(`❌ Cannot reach backend at ${API}. Check if backend is running.`)
-      } else if (errorMsg.includes("CORS")) {
-        setStatus("❌ CORS error - Backend not configured for frontend requests")
-      } else {
-        setStatus(`❌ Registration failed: ${errorMsg}`)
-      }
+      const errorMsg = err instanceof Error ? err.message : "Unknown error"
+      setStatus(
+        errorMsg.includes("fetch") ? `Cannot reach backend at ${API}` : `Registration failed: ${errorMsg}`
+      )
     } finally {
       setLoading(false)
     }
@@ -128,7 +129,7 @@ export default function TouristRegistration({ onRegister }: TouristRegistrationP
         </div>
 
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Phone Number</label>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Contact Number</label>
           <input
             type="tel"
             placeholder="+91-XXXXXXXXXX"
@@ -149,16 +150,51 @@ export default function TouristRegistration({ onRegister }: TouristRegistrationP
           />
         </div>
 
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
+          <div className="relative">
+            <input
+              type={showPassword ? "text" : "password"}
+              placeholder="At least 6 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-2xl text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 text-sm"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? "Hide" : "Show"}
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mt-1">Minimum 6 characters</p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Confirm Password</label>
+          <input
+            type={showPassword ? "text" : "password"}
+            placeholder="Re-enter your password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            className="w-full px-4 py-3 border border-gray-300 rounded-2xl text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+          />
+          {confirmPassword && password !== confirmPassword && (
+            <p className="text-xs text-red-600 mt-1">Passwords do not match</p>
+          )}
+        </div>
+
         <button
           onClick={handleRegister}
           disabled={loading}
-          style={{ backgroundColor: loading ? "#94a3b8" : "var(--primary)" }}
-          className="w-full text-white py-3.5 rounded-2xl font-semibold text-base hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl"
+          className="w-full bg-blue-600 text-white py-3.5 rounded-2xl font-semibold text-base hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl"
         >
           {loading ? (
-            <span className="flex items-center justify-center">
+            <span className="flex items-center justify-center gap-2">
               <svg
-                className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
+                className="animate-spin h-5 w-5 text-white"
                 xmlns="http://www.w3.org/2000/svg"
                 fill="none"
                 viewBox="0 0 24 24"
@@ -170,12 +206,12 @@ export default function TouristRegistration({ onRegister }: TouristRegistrationP
                   r="10"
                   stroke="currentColor"
                   strokeWidth="4"
-                ></circle>
+                />
                 <path
                   className="opacity-75"
                   fill="currentColor"
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
+                />
               </svg>
               Registering...
             </span>
@@ -187,24 +223,16 @@ export default function TouristRegistration({ onRegister }: TouristRegistrationP
         {status && (
           <div
             className={`p-3 rounded-2xl text-sm text-center font-medium ${
-              status.includes("✅")
+              status.includes("success")
                 ? "bg-green-50 text-green-700 border border-green-200"
-                : status.includes("❌")
+                : status.includes("already registered") || status.includes("do not match")
                   ? "bg-red-50 text-red-700 border border-red-200"
-                  : "bg-yellow-50 text-yellow-700 border border-yellow-200"
+                  : "bg-amber-50 text-amber-700 border border-amber-200"
             }`}
           >
             {status}
           </div>
         )}
-
-        {/* Debug Info Box - Remove in production */}
-        <div className="p-3 bg-gray-100 rounded-2xl text-xs text-gray-700 font-mono max-h-24 overflow-y-auto">
-          <p className="font-bold mb-1">🔧 Debug Info (Remove in Production):</p>
-          <p>API: {API}</p>
-          <p>Status: {loading ? "Loading..." : "Ready"}</p>
-          <p>Check browser console (F12) for detailed logs</p>
-        </div>
       </div>
     </div>
   )

@@ -41,6 +41,7 @@ async function networkFirst(request, cacheName) {
   const cache = await caches.open(cacheName)
   try {
     const res = await fetch(request)
+    // Never cache error responses (4xx/5xx) so the browser can recover
     if (res && res.ok) cache.put(request, res.clone())
     return res
   } catch (e) {
