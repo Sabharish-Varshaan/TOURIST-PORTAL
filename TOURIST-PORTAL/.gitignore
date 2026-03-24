@@ -1,0 +1,39 @@
+frontend.zip
+backend.zip
+# Ignore environment files
+*.env
+*.env.example
+
+# Ignore requirements.txt in subfolders
+**/requirements.txt
+
+# Ignore README.md in subfolders
+**/README.md
+
+# Ignore database files
+*.db
+*.sqlite
+guardianid.db
+
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
+
+# Ignore Node.js build files
+node_modules/
+.next/
+
+# Ignore Python virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Ignore logs
+*.log
+*.log.*
+
+# Ignore system files
+.DS_Store
+.vscode/
+*/guardianid.db

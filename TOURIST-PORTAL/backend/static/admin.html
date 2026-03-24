@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>GuardianID – Admin (Define Zones)</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+  <style>
+    :root { --bg:#f5f7fb; --monitor-surface:#0b1220; --card:#0f172a; --muted:#94a3b8; --text:#e6eef8; --accent:#22d3ee; }
+    html,body{height:100%; margin:0; font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; background:var(--bg);}
+.page {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.monitor {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  background: var(--monitor-surface);
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+}
+
+.screen {
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  background: var(--monitor-surface);
+  color: var(--text);
+}
+
+
+    .row { display:grid; grid-template-columns: 260px 1fr; gap:14px; align-items:start; }
+    .card { background:var(--card); border-radius:12px; padding:12px; box-shadow:0 8px 24px rgba(0,0,0,0.2); color:var(--text); }
+    #map { height:420px; border-radius:10px; }
+
+    label{display:block;margin-top:8px;color:var(--muted);font-weight:600}
+    input, select { width:100%; padding:10px; border-radius:8px; border:1px solid #1f2937; background:transparent; color:var(--text); }
+    button { background:var(--accent); color:#071426; border:none; padding:10px 12px; border-radius:10px; cursor:pointer; font-weight:700; margin-top:10px; }
+
+    .muted { color:var(--muted); font-size:13px; }
+    .small { font-size:13px; color:var(--muted); margin-top:8px; }
+
+    /* ✅ ADDED STYLES FOR DELETE BUTTON */
+    .delete-btn {
+        background-color: #ef4444; color: white;
+        padding: 4px 10px; font-size: 12px;
+        margin-top: 0;
+    }
+
+    @media(max-width:900px){ .row{ grid-template-columns: 1fr; } .card#left{ order:2; } .card#mapcard{ order:1; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="monitor" role="main">
+      <div class="screen">
+        <h2 style="margin:0 0 8px;font-weight:800">GuardianID – Admin</h2>
+        <p class="muted" style="margin:0 0 12px">Draw restricted/danger/terror polygons on the map. Save to publish to dashboard & tourist apps.</p>
+
+        <div class="row">
+          <div class="card" id="left">
+            <div style="font-weight:700">Controls</div>
+            <label>Zone Name</label>
+            <input id="zname" placeholder="e.g., Kaziranga Buffer Strip"/>
+            <label>Zone Type</label>
+            <select id="ztype">
+              <option value="RESTRICTED">RESTRICTED</option>
+              <option value="DANGER">DANGER</option>
+              <option value="TERROR">TERROR</option>
+            </select>
+            <label>Dwell Minutes</label>
+            <input id="zdwell" type="number" min="1" value="5"/>
+            <button id="saveBtn">Save Zone</button>
+            <p id="status" class="small muted">Draw a polygon on the right and then save it.</p>
+
+            <div style="margin-top:12px" class="small muted">Legend</div>
+            <ul style="margin:8px 0 0 16px">
+              <li>🔴 TERROR</li>
+              <li>🟠 RESTRICTED</li>
+              <li>🔶 DANGER</li>
+            </ul>
+
+            <hr style="border-color: #334155; margin: 20px 0;">
+            <div style="font-weight:700">Manage Existing Zones</div>
+            <p class="small muted">Total Restricted Zones: <b id="restricted-count">0</b></p>
+            <div id="zone-list" style="margin-top:10px; max-height: 200px; overflow-y: auto;">
+              </div>
+
+          </div>
+
+          <div class="card" id="mapcard">
+            <div id="map"></div>
+            <div style="margin-top:10px; display:flex; justify-content:space-between; align-items:center;">
+              <div class="muted">Live preview of zones & heat</div>
+              <div class="muted">auto-save disabled</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const API = location.origin;
+let map, drawnItems, latestPoly = null;
+let allZones = []; // To hold the list of all zones
+
+function init(){
+  map = L.map('map').setView([26.1725, 91.7440], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19}).addTo(map);
+
+  drawnItems = new L.FeatureGroup(); map.addLayer(drawnItems);
+  const drawControl = new L.Control.Draw({
+    draw: {
+      polyline:false, rectangle:false, circle:false, marker:false, circlemarker:false,
+      polygon: { allowIntersection:false, showArea:true, metric:true }
+    },
+    edit: { featureGroup: drawnItems }
+  });
+  map.addControl(drawControl);
+
+  map.on(L.Draw.Event.CREATED, function(e){
+    if(latestPoly) drawnItems.removeLayer(latestPoly);
+    latestPoly = e.layer;
+    drawnItems.addLayer(latestPoly);
+    document.getElementById('status').textContent = 'Polygon captured. Set details and click Save Zone.';
+  });
+
+  // Fetch, draw, and list existing zones
+  fetch(API + '/api/zones').then(r=>r.json()).then(zones=>{
+    allZones = zones; // Store for management
+    renderZoneListAndCount(); // Call the new function
+    allZones.forEach(z=>{
+      try{
+        const coords = z.geojson.coordinates[0].map(([lng,lat])=>[lat,lng]);
+        const color = z.zone_type === 'TERROR' ? '#ef4444' : (z.zone_type === 'RESTRICTED' ? '#f59e0b' : '#f43f5e');
+        L.polygon(coords, {color, weight:2, fillOpacity:0.08}).addTo(map).bindTooltip(`${z.zone_type}: ${z.name}`);
+      }catch(e){}
+    });
+  }).catch(()=>{});
+}
+
+// ✅ NEW: Function to display the count and list of zones
+function renderZoneListAndCount() {
+    const listContainer = document.getElementById('zone-list');
+    const countEl = document.getElementById('restricted-count');
+    listContainer.innerHTML = ''; // Clear the list before re-rendering
+
+    // Calculate and display the count of restricted zones
+    const restrictedCount = allZones.filter(z => z.zone_type === 'RESTRICTED').length;
+    countEl.textContent = restrictedCount;
+
+    if (allZones.length === 0) {
+        listContainer.innerHTML = '<p class="small muted">No zones have been created yet.</p>';
+        return;
+    }
+
+    // Create and append list items with delete buttons
+    allZones.forEach(zone => {
+        const item = document.createElement('div');
+        item.style = "display:flex; justify-content:space-between; align-items:center; padding: 5px 0; font-size: 14px; border-bottom: 1px solid #1f2937;";
+        item.innerHTML = `
+            <span>${zone.name} (${zone.zone_type})</span>
+            <button class="delete-btn" data-id="${zone.id}">Delete</button>
+        `;
+        listContainer.appendChild(item);
+    });
+
+    // Add event listeners to all delete buttons
+    document.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', deleteZone);
+    });
+}
+
+// ✅ NEW: Function to handle zone deletion
+async function deleteZone(event) {
+    const zoneId = event.target.dataset.id;
+    if (!confirm(`Are you sure you want to delete zone #${zoneId}? This action cannot be undone.`)) {
+        return;
+    }
+    const statusEl = document.getElementById('status');
+    statusEl.textContent = `Attempting to delete Zone ${zoneId}...`;
+
+    const res = await fetch(`${API}/api/zones/${zoneId}`, { method: 'DELETE' });
+    const data = await res.json();
+
+    if (data.ok) {
+        statusEl.textContent = `Zone ${zoneId} deleted. Refreshing...`;
+        setTimeout(() => location.reload(), 800);
+    } else {
+        statusEl.textContent = `Error deleting zone: ${data.detail || 'Unknown error'}`;
+    }
+}
+
+async function saveZone(){
+  const name = document.getElementById('zname').value.trim();
+  const zone_type = document.getElementById('ztype').value;
+  const dwell = parseInt(document.getElementById('zdwell').value || '5', 10);
+  if(!latestPoly){ document.getElementById('status').textContent = 'Please draw a polygon first.'; return; }
+  if(!name){ document.getElementById('status').textContent = 'Please enter a name.'; return; }
+
+  const latlngs = latestPoly.getLatLngs()[0].map(ll => [ll.lng, ll.lat]);
+  if(latlngs.length < 3){ document.getElementById('status').textContent = 'Polygon needs at least 3 points.'; return; }
+  if(latlngs[0][0] != latlngs[latlngs.length-1][0] || latlngs[0][1] != latlngs[latlngs.length-1][1]) latlngs.push(latlngs[0]);
+
+  const geojson = { type: 'Polygon', coordinates: [latlngs] };
+  const res = await fetch(API + '/api/zones/add', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ name, zone_type, dwell_minutes:dwell, geojson })
+  });
+  const data = await res.json();
+  if(data.ok){ document.getElementById('status').textContent = 'Zone saved ✔. It will appear on dashboard & tourist app.'; latestPoly = null; drawnItems.clearLayers(); setTimeout(()=>location.reload(),600); }
+  else document.getElementById('status').textContent = 'Error: ' + JSON.stringify(data);
+}
+
+document.addEventListener('DOMContentLoaded', init);
+document.getElementById('saveBtn').addEventListener('click', saveZone);
+</script>
+</body>
+</html>

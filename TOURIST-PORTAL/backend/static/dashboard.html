@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>GuardianID – Authority Dashboard</title>
+
+  <!-- Leaflet + Heat -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+
+  <style>
+    :root{
+      --bg: #f5f7fb;          /* page background (light so bezel shows) */
+      --outer: #111827;       /* monitor outer bezel */
+      --monitor-surface: #0b1220; /* inner dark surface */
+      --card: #0f172a;
+      --muted: #94a3b8;
+      --text: #e6eef8;
+      --accent: #22d3ee;
+      --danger: #ef4444;
+    }
+
+    html,body{height:100%; margin:0; background:var(--bg); font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;}
+    /* center a large monitor mockup */
+    .page {
+      min-height: 100vh;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .monitor {
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      background: var(--monitor-surface);
+      border-radius: 0;
+      padding: 0;
+      box-shadow: none;
+    }
+
+    .screen {
+      width: 100%;
+      height: 100%;
+      padding: 16px;
+      background: var(--monitor-surface);
+    }
+
+    /* toolbar row inside screen */
+    .toolbar {
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:16px;
+      color:var(--muted);
+      margin-bottom:10px;
+    }
+
+    /* layout inside screen: left column (cards) + main column */
+    .layout {
+      display: grid;
+      grid-template-columns: 300px 1fr; /* sidebar + main */
+      gap: 16px;
+      height: calc(100vh - 50px); /* full height minus toolbar */
+    }
+
+    .leftCol {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+    }
+
+    .mainCol {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      gap: 12px;
+    }
+
+    #dashMap {
+      flex: 0 0 60%; /* map takes 60% height */
+      border-radius: 10px;
+    }
+
+    .incidentCard {
+      flex: 1; /* logs take the remaining 40% */
+      overflow-y: auto;
+    }
+    .card {
+      background: var(--card);
+      color: var(--text);
+      border-radius:12px;
+      padding:12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+      font-size:14px;
+    }
+    .card .muted { color:var(--muted); font-size:13px; }
+
+    .stat {
+      font-weight:800;
+      font-size:1.6rem;
+      margin-top:6px;
+    }
+
+    .kycInput {
+      display:flex;
+      gap:8px;
+      align-items:center;
+      margin-top:8px;
+    }
+    .kycInput input { flex:1; padding:8px 10px; border-radius:8px; border:1px solid #1f2937; background:#0b1220; color:var(--text); }
+    .kycInput button { background:var(--accent); color:#071426; border:none; padding:8px 12px; border-radius:8px; cursor:pointer; font-weight:700; }
+
+    /* main area: map + tables */
+    .mainCol { display:flex; flex-direction:column; gap:12px; }
+    #dashMap { height:340px; border-radius:10px; overflow:hidden; }
+
+    /* Tables and lists */
+    table { width:100%; border-collapse:collapse; color:var(--text); font-size:13px; }
+    th, td { padding:10px 8px; border-bottom:1px solid rgba(255,255,255,0.04); text-align:left; }
+    th { color:#cbd5e1; font-weight:600; font-size:13px; }
+    tr.highlight { background: linear-gradient(90deg, rgba(255,250,230,0.02), rgba(255,248,220,0.01)); }
+    .status { padding:4px 8px; border-radius:999px; font-weight:700; font-size:12px; display:inline-block; }
+    .SAFE { background: rgba(16,185,129,0.12); color:#10b981; }
+    .ALERT { background: rgba(239,68,68,0.12); color:#ef4444; }
+
+    /* incident log card style */
+    .incidentCard { max-height:250px; overflow:auto; }
+
+    /* action button */
+    .ackBtn { background:#fff0e6; color:#1f2937; padding:6px 10px; border-radius:8px; border:none; cursor:pointer; font-weight:700; }
+    .smallBtn { padding:4px 8px; border-radius:6px; border:none; cursor:pointer; font-weight:700; margin-right:6px; }
+    .assignBtn { background:#10b981; color:#071426; }
+    .resolveBtn { background:#ef4444; color:#071426; }
+    .reassignBtn { background:#f59e0b; color:#071426; }
+
+    /* footer small links */
+    .foot { margin-top:10px; color:var(--muted); font-size:13px; }
+
+    /* responsive */
+    @media (max-width:980px){
+      .layout { grid-template-columns: 1fr; }
+      .leftCol { flex-direction:row; overflow:auto; }
+      .leftCol .card { min-width:200px; }
+    }
+
+    /* modal root & backdrop (for assign modal) */
+    #assignModalRoot {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 200000 !important;
+      pointer-events: auto;
+    }
+
+    #assignModalRoot .modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(2px);
+    }
+
+    /* the actual modal box */
+    #assignModalRoot .modal-box {
+      position: relative;
+      z-index: 200001;
+      width: min(760px, 96%);
+      max-height: 86vh;
+      overflow:auto;
+      border-radius: 10px;
+      padding: 16px;
+      background: linear-gradient(180deg,#071426, #0b1220);
+      color: var(--text);
+      box-shadow: 0 18px 48px rgba(2,6,23,0.8);
+      border: 1px solid rgba(255,255,255,0.04);
+    }
+
+    #assignModalRoot .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
+    #assignModalRoot .btn { padding:8px 12px; border-radius:8px; cursor:pointer; border:none; font-weight:700; }
+    #assignModalRoot .btn.cancel { background:#1f2937; color:var(--text); }
+    #assignModalRoot .btn.primary { background: #06b6d4; color:#071426; }
+
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="monitor" role="region" aria-label="Dashboard monitor">
+      <div class="screen">
+
+        <div class="toolbar">
+          <div style="font-weight:800; color:var(--text)">GuardianID — Authority Dashboard</div>
+          <div style="color:var(--muted)">Live · Heatmap · eKYC · Incidents · Ticketing</div>
+        </div>
+
+        <div class="layout">
+<div class="leftCol">
+  <!-- Tourist Search -->
+  <div class="card">
+    <div class="muted">Tourist Lookup</div>
+    <div class="kycInput" style="flex-direction:column; gap:8px;">
+      <div style="display:flex; gap:8px; width:100%;">
+        <input id="kycSearch" placeholder="Enter Tourist ID" />
+        <button id="kycBtn">Get Details</button>
+      </div>
+      <div id="kycDetails" style="display:none; margin-top:8px; background:rgba(255,255,255,0.02); padding:8px; border-radius:6px;">
+  <!-- details will be filled by JS -->
+  <div style="font-weight:700; margin-bottom:6px;" id="kd_name">—</div>
+  <div id="kd_id" class="muted">ID: —</div>
+  <div id="kd_phone" class="muted">Phone: —</div>
+  <div id="kd_emergency" class="muted">Emergency: —</div>
+  <div id="kd_status" class="muted">Status: —</div>
+  <div id="kd_checkin" class="muted">Last checkin: —</div>
+  <div id="kd_kyc" class="muted">KYC: —</div>
+  <div id="kd_coords" class="muted">Coords: —</div>
+
+  <!-- Refresh + last updated -->
+  <div style="margin-top:8px; display:flex; justify-content:space-between; align-items:center;">
+    <button id="kd_refresh" style="padding:6px 10px; border:none; border-radius:6px; background:#22d3ee; color:#071426; font-weight:700; cursor:pointer;">Refresh</button>
+    <span id="kd_lastupdate" class="muted" style="font-size:12px;">Updated: —</span>
+  </div>
+
+  <!-- Incidents toggle -->
+  <div style="margin-top:8px;">
+    <button id="kd_show_incidents" style="width:100%;padding:6px;border:none;border-radius:6px;background:#f97316;color:#071426;font-weight:700;cursor:pointer;">Show incidents</button>
+    <div id="kd_incidents" style="margin-top:8px; display:none; max-height:220px; overflow:auto; font-size:13px; color:var(--text);"></div>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="card">
+    <div class="muted">Quick Stats</div>
+    <div style="margin-top:8px;">
+      <div>Total Active Tourists: <span class="stat" id="statTotal">0</span></div>
+      <div>Active SOS: <span class="stat" id="statSOS" style="color:var(--danger)">0</span></div>
+    </div>
+  </div>
+
+  <!-- Recent Alerts -->
+  <div class="card">
+    <div class="muted">Recent Incidents</div>
+    <ul id="alertsList" style="margin:8px 0 0 16px; padding:0; list-style:disc; color:var(--text)"></ul>
+  </div>
+</div>
+
+
+<div class="mainCol">
+  <div class="card" style="padding:8px; flex:0 0 60%;">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div style="font-weight:700">Map: Live Tourists & Zones</div>
+      <div class="muted">auto-refresh every 5s</div>
+    </div>
+    <div id="dashMap"></div>
+  </div>
+
+  <div class="card incidentCard">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-weight:700">Live Incident Feed</div>
+      <div class="muted">latest first</div>
+    </div>
+    <table id="logsTable">
+      <thead>
+        <tr>
+          <th>ID</th><th>Tourist</th><th>Type</th><th>Location</th><th>Timestamp</th><th>Hash</th><th>Coords</th>
+          <th>Ticket</th><th>Assignee</th><th>Action</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+            <div class="foot">Admin: <a style="color:var(--accent)" href="/static/admin.html">Open admin</a> • Tourist app: <a style="color:var(--accent)" href="/static/tourist.html">Open tourist</a></div>
+          </div>
+        </div>
+
+      </div> <!-- screen -->
+    </div> <!-- monitor -->
+  </div> <!-- page -->
+
+<!-- assign modal root (created on-demand) -->
+<div id="assignModalRoot" style="display:none;">
+  <div class="modal-backdrop"></div>
+  <div class="modal-box" role="dialog" aria-modal="true">
+    <div id="assignModalContent">Loading…</div>
+    <div class="modal-actions" style="margin-top:12px;">
+      <button class="btn cancel">Cancel</button>
+      <button class="btn primary">Assign</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = location.origin;
+
+// map / heat globals
+let map, markers = {}, touristHeatLayer=null, zoneHeatLayer=null, zoneLayers=[];
+let _cachedSubstations = null;
+
+function initMap() {
+  map = L.map('dashMap').setView([26.1725, 91.7440], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19}).addTo(map);
+  drawZones();
+}
+
+async function drawZones(){
+  zoneLayers.forEach(l=>map.removeLayer(l)); zoneLayers=[];
+  const zones = await (await fetch(API + '/api/zones')).json();
+  zones.forEach(z=>{
+    try{
+      const coords = z.geojson.coordinates[0].map(([lng, lat]) => [lat, lng]);
+      const color = z.zone_type === 'TERROR' ? '#ef4444' : (z.zone_type === 'RESTRICTED' ? '#f59e0b' : '#f43f5e');
+      const poly = L.polygon(coords, { color, weight:2, fillOpacity:0.12 }).addTo(map);
+      poly.bindTooltip(`${z.zone_type}: ${z.name} (dwell ${z.dwell_minutes} min)`);
+      zoneLayers.push(poly);
+    }catch(e){}
+  });
+  buildZoneHeat(zones);
+}
+
+function renderTouristMarkers(rows){
+  for(const r of rows){
+    if(r.last_lat && r.last_lat !== "-" && r.last_lng && r.last_lng !== "-"){
+      const key = r.id;
+      const latlng = [parseFloat(r.last_lat), parseFloat(r.last_lng)];
+      const iconEmoji = r.status === 'ALERT' ? '🔴' : '🔵';
+      if(!markers[key]){
+        markers[key] = L.marker(latlng).addTo(map).bindPopup(`${iconEmoji} ${r.name} (${r.status})`);
+      } else {
+        markers[key].setLatLng(latlng).setPopupContent(`${iconEmoji} ${r.name} (${r.status})`);
+      }
+    }
+  }
+}
+
+function buildTouristHeat(tourists){
+  const pts = [];
+  for(const t of tourists){
+    if(t.last_lat && t.last_lat !== "-" && t.last_lng && t.last_lng !== "-"){
+      const lat = parseFloat(t.last_lat), lng = parseFloat(t.last_lng);
+      const w = (t.status === "ALERT") ? 1.8 : 1.0;
+      pts.push([lat, lng, w]);
+    }
+  }
+  if(touristHeatLayer){
+    touristHeatLayer.setLatLngs(pts);
+  } else {
+    touristHeatLayer = L.heatLayer(pts, { radius: 28, blur: 18, maxZoom: 17 }).addTo(map);
+  }
+}
+
+function polygonCentroidLonLat(ring){
+  const pts = ring.slice();
+  if(pts.length>2 && (pts[0][0] !== pts[pts.length-1][0] || pts[0][1] !== pts[pts.length-1][1])) pts.push(pts[0]);
+  let area=0,cx=0,cy=0;
+  for(let i=0;i<pts.length-1;i++){
+    const [x1,y1]=pts[i], [x2,y2]=pts[i+1]; const a = x1*y2 - x2*y1;
+    area += a; cx += (x1+x2)*a; cy += (y1+y2)*a;
+  }
+  if(area===0){ let sx=0,sy=0; for(const [x,y] of pts){ sx+=x; sy+=y;} return [sx/pts.length, sy/pts.length]; }
+  area *= 0.5; return [cx/(6*area), cy/(6*area)];
+}
+
+function buildZoneHeat(zones){
+  const pts=[];
+  zones.forEach(z=>{
+    try{
+      const ring = z.geojson.coordinates[0];
+      const [clon, clat] = polygonCentroidLonLat(ring);
+      let w = 1.0;
+      if(z.zone_type === "RESTRICTED") w = 1.3;
+      if(z.zone_type === "DANGER") w = 1.6;
+      if(z.zone_type === "TERROR") w = 2.0;
+      if(z.dwell_minutes && z.dwell_minutes > 0) w *= Math.min(2.2, 1.0 + (5 / z.dwell_minutes));
+      pts.push([clat, clon, w]);
+    }catch(e){}
+  });
+  if(zoneHeatLayer){ zoneHeatLayer.setLatLngs(pts); }
+  else { zoneHeatLayer = L.heatLayer(pts, { radius: 42, blur: 28, maxZoom: 17 }).addTo(map); }
+}
+
+async function refreshAll(){
+  try {
+    const [tourists, logs] = await Promise.all([
+      fetch(API + '/api/tourists').then(r => r.ok ? r.json() : []),
+      fetch(API + '/api/logs').then(r => r.ok ? r.json() : [])
+    ]);
+    renderTouristMarkers(tourists || []);
+    buildTouristHeat(tourists || []);
+    renderTourists(tourists || []);
+    renderAlerts(logs || []);  // left "Recent Incidents" will use logs
+    renderLogs(logs || []);    // bottom large table
+    updateKycSummary(tourists || []);
+  } catch (err) {
+    console.error('refreshAll error', err);
+  }
+}
+
+
+function renderTourists(rows){
+  document.getElementById('statTotal').textContent = rows.length;
+  let sos = 0;
+  rows.forEach(r => { if(r.status==='ALERT') sos++; });
+  document.getElementById('statSOS').textContent = sos;
+}
+
+function renderAlerts(rows){
+  const ul = document.getElementById('alertsList');
+  ul.innerHTML = '';
+  if(!rows || rows.length === 0){
+    const li = document.createElement('li');
+    li.textContent = 'No recent incidents';
+    li.style.color = 'var(--muted)';
+    ul.appendChild(li);
+    return;
+  }
+  // rows from /api/logs are newest-first already; show first 5
+  const latest = rows.slice(0,5);
+  latest.forEach(l => {
+    const li = document.createElement('li');
+    const label = l.location_label && l.location_label !== '-' ? ` – ${l.location_label}` : '';
+    li.textContent = `${l.event_type.toUpperCase()}${label} • ${l.timestamp}`;
+    ul.appendChild(li);
+  });
+}
+
+
+// UPDATED renderLogs: includes ticket_status only for SOS and uses modal assign
+function renderLogs(rows){
+  const tb = document.querySelector('#logsTable tbody'); tb.innerHTML = '';
+  rows.forEach(l=>{
+    const tr = document.createElement('tr');
+
+    const coords = (l.lat !== "-" && l.lng !== "-") ? (l.lat.toFixed(4)+','+l.lng.toFixed(4)) : '-';
+
+    // base columns
+    let rowHtml = `<td>${l.id}</td>
+                    <td style="font-family:monospace">${l.tourist_id}</td>
+                    <td>${l.event_type}</td>
+                    <td>${l.location_label}</td>
+                    <td>${l.timestamp}</td>
+                    <td style="font-family:monospace">${(l.hash_hex||'').slice(0,16)}...</td>
+                    <td>${coords}</td>`;
+
+    // Add ticketing columns ONLY if SOS
+    if(l.event_type && l.event_type.toLowerCase().includes("sos")){
+      const ticket = l.ticket_status || 'NEW';
+      const assignee = l.ticket_assignee || '-';
+
+      let actionHtml = '';
+      if(ticket === 'NEW' || ticket === null){
+        actionHtml = `<button class="smallBtn assignBtn" onclick="assignTicketPrompt('${l.id}')">Assign</button>`;
+      } else if(ticket === 'ASSIGNED'){
+        actionHtml = `<button class="smallBtn resolveBtn" onclick="resolveTicket('${l.id}')">Resolve</button>
+                      <button class="smallBtn reassignBtn" onclick="assignTicketPrompt('${l.id}')">Reassign</button>`;
+      } else if(ticket === 'RESOLVED'){
+        actionHtml = `<span class="muted">Resolved</span>`;
+      } else {
+        actionHtml = `<span>${ticket}</span>`;
+      }
+
+      rowHtml += `<td>${ticket}</td><td>${assignee}</td><td>${actionHtml}</td>`;
+    } else {
+      // keep table aligned
+      rowHtml += `<td>-</td><td>-</td><td>-</td>`;
+    }
+
+    tr.innerHTML = rowHtml;
+
+    if(l.event_type && l.event_type.toLowerCase().includes('sos')) tr.classList.add('highlight');
+    tb.appendChild(tr);
+  });
+}
+
+// fetch substations (cached)
+async function fetchSubstations(){
+  if(_cachedSubstations) return _cachedSubstations;
+  try {
+    const res = await fetch(API + '/api/substations');
+    if(!res.ok) throw new Error('Failed');
+    _cachedSubstations = await res.json();
+    return _cachedSubstations;
+  } catch (e) {
+    console.error('fetchSubstations error', e);
+    return [];
+  }
+}
+
+// Modal helper functions (ensure root exists and is on body)
+function ensureAssignModalRoot(){
+  let root = document.getElementById('assignModalRoot');
+  if(!root){
+    root = document.createElement('div');
+    root.id = 'assignModalRoot';
+    root.style.display = 'none';
+    root.innerHTML = `
+      <div class="modal-backdrop"></div>
+      <div class="modal-box" role="dialog" aria-modal="true">
+        <div id="assignModalContent">Loading…</div>
+        <div class="modal-actions" style="margin-top:12px;">
+          <button class="btn cancel">Cancel</button>
+          <button class="btn primary">Assign</button>
+        </div>
+      </div>`;
+    document.body.appendChild(root);
+    root.querySelector('.modal-backdrop').addEventListener('click', ()=> root.style.display = 'none');
+    root.querySelector('.btn.cancel').addEventListener('click', ()=> root.style.display = 'none');
+  }
+  return root;
+}
+
+function showAssignModal(contentHtml){
+  const root = ensureAssignModalRoot();
+  root.querySelector('#assignModalContent').innerHTML = contentHtml;
+  root.style.display = 'flex';
+  const assignBtn = root.querySelector('.btn.primary');
+
+  return new Promise((resolve) => {
+    function onAssign(){
+      assignBtn.removeEventListener('click', onAssign);
+      root.style.display = 'none';
+      resolve(true);
+    }
+    assignBtn.addEventListener('click', onAssign);
+  });
+}
+
+// Replace prompt() flow with modal assign flow
+async function assignTicketPrompt(incidentId){
+  const subs = await fetchSubstations();
+  if(!subs || subs.length === 0){ alert('No substations available to assign.'); return; }
+
+  // build list HTML (radio)
+  let html = `<div style="max-height:56vh; overflow:auto;">`;
+  subs.forEach((s,i) => {
+    html += `<label style="display:block; margin-bottom:8px;">
+      <input type="radio" name="substationChoice" value="${s.id}" ${i===0?'checked':''}>
+      &nbsp;<strong>${s.name}</strong> <span style="color:var(--muted)">(${s.id})</span>
+    </label>`;
+  });
+  html += `</div>
+    <div style="margin-top:8px;">
+      <label style="display:block; font-size:13px; color:var(--muted); margin-bottom:6px;">Add context or instructions (optional)</label>
+      <textarea id="assign_ctx" style="width:100%; min-height:80px; padding:8px; border-radius:6px; background:#071426; border:1px solid rgba(255,255,255,0.03); color:var(--text)"></textarea>
+    </div>`;
+
+  // show modal and wait for user to click Assign
+  const confirmed = await showAssignModal(html);
+  if (!confirmed) return;
+
+  // read selected values
+  const root = document.getElementById('assignModalRoot');
+  const selectedRadio = root.querySelector('input[name="substationChoice"]:checked');
+  if(!selectedRadio) { alert('Select a substation'); return; }
+  const selectedId = selectedRadio.value;
+  const selectedObj = subs.find(s => s.id == selectedId);
+  const context = document.getElementById('assign_ctx').value || '';
+
+  // post to assign endpoint
+  try {
+    const res = await fetch(API + `/api/incidents/${incidentId}/assign`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ assignee_id: selectedObj.id, assignee_name: selectedObj.name, notes: context })
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      console.error('assign failed', res.status, body);
+      alert('Assign failed. Check console.');
+      return;
+    }
+    await refreshAll();
+  } catch (e) {
+    console.error('assignTicket error', e);
+    alert('Assign failed (network).');
+  }
+}
+
+async function resolveTicket(incidentId){
+  if(!confirm('Mark this ticket as RESOLVED?')) return;
+  try {
+    const res = await fetch(API + `/api/incidents/${incidentId}/resolve`, { method:'POST' });
+    if(!res.ok){
+      const b = await res.text();
+      console.error('resolve failed', res.status, b);
+      alert('Resolve failed. See console.');
+      return;
+    }
+    await refreshAll();
+  } catch (e) {
+    console.error('resolveTicket error', e);
+    alert('Resolve failed (network).');
+  }
+}
+
+function updateKycSummary(tourists){
+  let verified=0,pending=0,rejected=0,alert=0;
+  for(const t of tourists){ const s=(t.kyc_status||'').toUpperCase(); if(s==='VERIFIED') verified++; else if(s==='REJECTED') rejected++; else pending++; if(t.status==='ALERT') alert++; }
+  document.getElementById('kycSummary')?.remove?.(); // no-op if absent
+}
+
+// ---- Tourist-details UI behaviour ----
+async function fetchAllTourists() {
+  try {
+    const res = await fetch(API + '/api/tourists');
+    if (!res.ok) throw new Error('Failed to fetch tourists');
+    return await res.json();
+  } catch (e) {
+    console.error('fetchAllTourists error', e);
+    return [];
+  }
+}
+
+async function fetchAllLogs() {
+  try {
+    const res = await fetch(API + '/api/logs');
+    if (!res.ok) throw new Error('Failed to fetch logs');
+    return await res.json();
+  } catch (e) {
+    console.error('fetchAllLogs error', e);
+    return [];
+  }
+}
+
+function showKycDetails(t) {
+  document.getElementById('kd_name').textContent = t.name || '—';
+  document.getElementById('kd_id').textContent = 'ID: ' + (t.id || '—');
+  document.getElementById('kd_phone').textContent = 'Phone: ' + (t.phone || '—');
+  document.getElementById('kd_emergency').textContent = 'Emergency: ' + (t.emergency_contact || '—');
+  document.getElementById('kd_status').textContent = 'Status: ' + (t.status || '—');
+  document.getElementById('kd_checkin').textContent = 'Last checkin: ' + (t.last_checkin || '—');
+  document.getElementById('kd_kyc').textContent = `KYC: ${t.kyc_status || '-'} ${t.kyc_doc_type ? '(' + t.kyc_doc_type + ')' : ''} ${t.kyc_id_masked ? '- ' + t.kyc_id_masked : ''}`;
+  document.getElementById('kd_coords').textContent = `Coords: ${t.last_lat || '-'} , ${t.last_lng || '-'}`;
+
+  // update timestamp
+  const now = new Date();
+  document.getElementById('kd_lastupdate').textContent = 'Updated: ' + now.toLocaleString();
+
+  document.getElementById('kycDetails').style.display = 'block';
+  document.getElementById('kd_incidents').style.display = 'none';
+}
+
+function renderIncidentsForTourist(incidents, touristId) {
+  const container = document.getElementById('kd_incidents');
+  container.innerHTML = '';
+  const filtered = incidents.filter(i => i.tourist_id === touristId);
+  if (filtered.length === 0) {
+    container.innerHTML = '<div style="color:var(--muted);">No incidents found.</div>';
+    return;
+  }
+  filtered.forEach(i => {
+    const div = document.createElement('div');
+    div.style.padding = '6px 8px';
+    div.style.borderBottom = '1px solid rgba(255,255,255,0.03)';
+    let ticketInfo = '';
+    if(i.event_type && i.event_type.toLowerCase().includes("sos")){
+      ticketInfo = i.ticket_status 
+        ? `<div style="font-size:12px;color:var(--muted)">Ticket: ${i.ticket_status} ${i.ticket_assignee ? ' — ' + i.ticket_assignee : ''}</div>`
+        : '';
+    }
+    div.innerHTML = `<div style="font-weight:700">${i.event_type} <span style="font-size:12px;color:var(--muted);">#${i.id}</span></div>
+                     <div style="font-size:12px;color:var(--muted)">${i.location_label} • ${i.timestamp}</div>
+                     ${ticketInfo}
+                     <div style="margin-top:6px;">${i.lat !== '-' && i.lng !== '-' ? '<a style="color:var(--accent)" href="https://www.google.com/maps/search/?api=1&query=' + i.lat + ',' + i.lng + '" target="_blank">Open coords</a>' : ''}</div>`;
+    container.appendChild(div);
+  });
+}
+
+document.getElementById('kycBtn').addEventListener('click', async function (ev) {
+  const q = (document.getElementById('kycSearch').value || '').trim();
+  if (!q) {
+    alert('Enter a Tourist ID to lookup.');
+    return;
+  }
+
+  // try an exact match by id first
+  const all = await fetchAllTourists();
+  let found = all.find(x => (x.id && x.id.toLowerCase() === q.toLowerCase()));
+  // fallback: search by id substring or name
+  if (!found) {
+    found = all.find(x => (x.id && x.id.toLowerCase().includes(q.toLowerCase())) || (x.name && x.name.toLowerCase().includes(q.toLowerCase())));
+  }
+
+  if (!found) {
+    alert('No tourist found with that ID / query.');
+    document.getElementById('kycDetails').style.display = 'none';
+    return;
+  }
+
+  showKycDetails(found);
+
+  // attach refresh / incidents handlers for this tourist
+  document.getElementById('kd_refresh').onclick = async () => {
+    const latest = (await fetchAllTourists()).find(x => x.id === found.id);
+    if (latest) showKycDetails(latest);
+  };
+
+  document.getElementById('kd_show_incidents').onclick = async () => {
+    const logs = await fetchAllLogs();
+    renderIncidentsForTourist(logs, found.id);
+    document.getElementById('kd_incidents').style.display = 'block';
+  };
+});
+
+// init
+initMap();
+refreshAll();
+setInterval(async ()=>{ await drawZones(); await refreshAll(); }, 5000);
+
+</script>
+</body>
+</html>
